@@ -1,0 +1,9 @@
+dist/
+node_modules/
+package-lock.json
+
+# Prose is maintained by hand; docs/spec.md and docs/plan.md are locked.
+*.md
+
+# Local agent settings (ignored by Git on some machines only)
+.claude/

@@ -13,3 +13,4 @@ Locked decisions and the reasons behind them. Details live in [spec.md](spec.md)
 | 2026-10-11 | No deadline; milestones gated on acceptance, not time | Owner decision | plan.md, introduction |
 | 2026-10-11 | No personal identifiers in the repo or published material | Owner decision; the repo is public and Git history is permanent | CLAUDE.md |
 | 2026-10-11 | Repo bootstrapped with one direct commit to `main`; all later work through branches and PRs | An empty repo has no base branch for a PR | Kickoff review |
+| 2026-10-11 | Phaser pinned to exactly 3.90.0; Node 24 LTS for development and CI (`.nvmrc`, `engines`) | 3.90.0 is the latest stable Phaser 3 release and the approved stack stays on Phaser 3 although Phaser 4 exists; an exact pin and an LTS runtime keep builds reproducible | M0 setup; plan.md, "Phase 4" |
