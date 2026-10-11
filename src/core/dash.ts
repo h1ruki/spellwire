@@ -93,3 +93,12 @@ export function stepDash(
     displacement: { x: direction.x * travelled, y: direction.y * travelled },
   };
 }
+
+/**
+ * Notes whether the dash key is held without letting any time pass. Used while
+ * play is paused, so a key held through the pause is not a fresh press when
+ * play resumes.
+ */
+export function holdDashKey(state: DashState, keyHeld: boolean): DashState {
+  return { ...state, keyWasHeld: keyHeld };
+}
