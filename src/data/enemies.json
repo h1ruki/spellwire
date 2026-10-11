@@ -16,7 +16,7 @@
     "size": 52,
     "colour": "#a56bff",
     "shape": "hexagon",
-    "xp": 1,
+    "xp": 2,
     "knockbackResistance": 0.75
   }
 }

@@ -134,19 +134,32 @@ describe('the shipped spawn timeline', () => {
     expect(enemiesAt(0)).toEqual(['swarmer']);
   });
 
-  it('has only swarmers before brutes join', () => {
+  it('has only swarmers before 1:15', () => {
+    expect(enemiesAt(0)).toEqual(['swarmer']);
     expect(enemiesAt(60)).toEqual(['swarmer']);
-    expect(enemiesAt(100)).toEqual(['swarmer']);
+    expect(enemiesAt(74.9)).toEqual(['swarmer']);
   });
 
-  it('adds brutes at about 2:00', () => {
+  it('has swarmers and brutes from 1:15 on', () => {
+    expect(enemiesAt(75)).toEqual(['swarmer', 'brute']);
+    expect(enemiesAt(100)).toEqual(['swarmer', 'brute']);
+  });
+
+  it('makes brutes more frequent from 2:00', () => {
+    const rate = (seconds: number) =>
+      activeSpawnRules(spawns, seconds).find((r) => r.enemy === 'brute')?.intervalSeconds ??
+      Infinity;
+    expect(rate(120)).toBeLessThan(rate(100));
+  });
+
+  it('adds brutes at about 1:15', () => {
     const joins = spawns.find((phase) => phase.spawns.some((rule) => rule.enemy === 'brute'));
-    expect(joins?.atSeconds).toBeGreaterThanOrEqual(110);
-    expect(joins?.atSeconds).toBeLessThanOrEqual(130);
+    expect(joins?.atSeconds).toBeGreaterThanOrEqual(70);
+    expect(joins?.atSeconds).toBeLessThanOrEqual(80);
   });
 
   it('has both swarmers and brutes active after brutes join', () => {
-    for (const seconds of [130, 180, 240, 280, 400, 3600]) {
+    for (const seconds of [75, 100, 130, 180, 240, 280, 400, 3600]) {
       expect(enemiesAt(seconds)).toContain('swarmer');
       expect(enemiesAt(seconds)).toContain('brute');
     }
@@ -168,8 +181,8 @@ describe('the shipped spawn timeline', () => {
     expect(heaviest.atSeconds).toBeLessThanOrEqual(280);
   });
 
-  it('spawns both swarmers and brutes when run from 2:00', () => {
-    const { spawned } = simulate(spawns, 120, 150);
+  it('spawns both swarmers and brutes when run from 1:15', () => {
+    const { spawned } = simulate(spawns, 75, 105);
     expect(spawned.swarmer).toBeGreaterThan(0);
     expect(spawned.brute).toBeGreaterThan(0);
   });

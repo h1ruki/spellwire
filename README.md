@@ -2,7 +2,7 @@
 
 A top-down survivor roguelite where you build your weapon from a trigger, a modifier and an elemental payload, then watch how each part changes the way it fires.
 
-**Status:** early development. Milestone M1 (move and shoot) is complete. Milestone M2 (horde and XP) is in review: the horde grows on a timeline, brutes join the swarmers at about 2:00, and kills drop XP crystals that fill a bar and raise your level. Level-ups do not give upgrades yet; upgrades and weapon parts arrive in M3. The shapes on screen are placeholders for the planned pixel art.
+**Status:** early development. Milestone M1 (move and shoot) is complete. Milestone M2 (horde and XP) is in review: the horde grows on a timeline, brutes join the swarmers at about 1:15, and kills drop XP crystals that fill a bar and raise your level. Level-ups do not give upgrades yet; upgrades and weapon parts arrive in M3. The shapes on screen are placeholders for the planned pixel art.
 
 **Play:** <https://h1ruki.github.io/spellwire/> (live since 11 October 2026; it shows the latest milestone merged to `main`, so M2 appears there once it is merged)
 
@@ -60,7 +60,7 @@ Tuning lives in JSON under `src/data/` and is validated on startup; a mistake sh
   - `caps`: `maxProjectiles`, `maxEnemies`
   - `xp`: `firstLevelXp` (XP for the first level-up), `perLevelIncrease` (extra XP each later level needs)
   - `pickupRange`
-  - `crystals`: `attractSpeed`, `maxCrystals`
+  - `crystals`: `attractSpeed`, `maxCrystals` and `tiers`, a list of `minValue`, `colour` and `size`. A crystal looks like the highest tier whose `minValue` is at most its XP value (the first tier must start at 1; tiers go in ascending order), so one that absorbs others at the cap changes look with its total
   - `hitFeedback`: `flashSeconds`, `knockbackStrength`, `shakeIntensity` (pixels; 0 turns the shake off), `shakeSeconds`
 - `src/data/enemies.json`: for each enemy (`swarmer`, `brute`), `speed`, `health`, `contactDamage`, `size`, `colour`, `shape` (the player shapes plus `"hexagon"`), `xp` and `knockbackResistance` (0 = pushed fully by a hit, 1 = not pushed).
 - `src/data/spawns.json`: the spawn timeline. Each entry has `atSeconds` and a `spawns` list of `enemy`, `intervalSeconds` and `groupSize`. An entry is a complete snapshot of everything that spawns from that time until the next entry, not a change to the one before: an entry that adds brutes must list swarmers too. Entries must be in time order, and the last one continues for the rest of the run.

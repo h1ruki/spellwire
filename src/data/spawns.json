@@ -12,6 +12,13 @@
     "spawns": [{ "enemy": "swarmer", "intervalSeconds": 1.6, "groupSize": 3 }]
   },
   {
+    "atSeconds": 75,
+    "spawns": [
+      { "enemy": "swarmer", "intervalSeconds": 1.6, "groupSize": 3 },
+      { "enemy": "brute", "intervalSeconds": 12, "groupSize": 1 }
+    ]
+  },
+  {
     "atSeconds": 120,
     "spawns": [
       { "enemy": "swarmer", "intervalSeconds": 1.6, "groupSize": 3 },
