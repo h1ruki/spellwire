@@ -1,0 +1,13 @@
+# Private notes and secrets
+.private/
+.env
+*.env
+
+# Dependencies and build output
+node_modules/
+dist/
+
+# Editor and OS files
+.DS_Store
+.vscode/
+.idea/
