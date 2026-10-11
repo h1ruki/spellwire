@@ -4,6 +4,7 @@ import partsJson from '../data/parts.json';
 import playerJson from '../data/player.json';
 import spawnsJson from '../data/spawns.json';
 import tuningJson from '../data/tuning.json';
+import { VIEW, type Size } from './camera';
 import type { CrystalTier } from './crystals';
 import type { DashTuning } from './dash';
 import type { BurnSpec, Part, SlowSpec } from './loadout';
@@ -37,6 +38,10 @@ export interface FireTuning {
   /** Pixels per second. */
   projectileSpeed: number;
   projectileDamage: number;
+  /** Width and height of a shot as drawn, in pixels. */
+  projectileSize: number;
+  /** Radius a shot hits with, in pixels; larger than it looks makes aiming more forgiving. */
+  projectileHitRadius: number;
 }
 
 export interface PlayerHealthTuning {
@@ -80,6 +85,8 @@ export interface BurnTuning {
 }
 
 export interface Tuning {
+  /** The finite world the run takes place in, in pixels; at least as large as the view. */
+  world: Size;
   /** Player movement speed in pixels per second. */
   moveSpeed: number;
   dash: DashTuning;
@@ -192,6 +199,23 @@ function nonNegativeNumber(file: string, field: string, value: unknown): number 
   return value;
 }
 
+function atLeast(
+  file: string,
+  field: string,
+  value: unknown,
+  minimum: number,
+  why: string,
+): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < minimum) {
+    throw new DataError(
+      file,
+      field,
+      `must be a number of ${minimum} or more (${why}), got ${JSON.stringify(value)}`,
+    );
+  }
+  return value;
+}
+
 function fraction(file: string, field: string, value: unknown): number {
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1) {
     throw new DataError(file, field, `must be a number from 0 to 1, got ${JSON.stringify(value)}`);
@@ -285,6 +309,7 @@ export function parseTuning(raw: unknown): Tuning {
   const record = asRecord(file, raw);
   const moveSpeed = positiveNumber(file, 'moveSpeed', record.moveSpeed);
 
+  const world = section(file, record, 'world');
   const dash = section(file, record, 'dash');
   const fire = section(file, record, 'fire');
   const player = section(file, record, 'player');
@@ -296,6 +321,10 @@ export function parseTuning(raw: unknown): Tuning {
   const burn = section(file, record, 'burn');
 
   return {
+    world: {
+      width: atLeast(file, 'world.width', world.width, VIEW.width, 'the width of the view'),
+      height: atLeast(file, 'world.height', world.height, VIEW.height, 'the height of the view'),
+    },
     moveSpeed,
     dash: {
       distance: positiveNumber(file, 'dash.distance', dash.distance),
@@ -306,6 +335,12 @@ export function parseTuning(raw: unknown): Tuning {
       shotsPerSecond: positiveNumber(file, 'fire.shotsPerSecond', fire.shotsPerSecond),
       projectileSpeed: positiveNumber(file, 'fire.projectileSpeed', fire.projectileSpeed),
       projectileDamage: positiveNumber(file, 'fire.projectileDamage', fire.projectileDamage),
+      projectileSize: positiveNumber(file, 'fire.projectileSize', fire.projectileSize),
+      projectileHitRadius: positiveNumber(
+        file,
+        'fire.projectileHitRadius',
+        fire.projectileHitRadius,
+      ),
     },
     player: {
       maxHealth: positiveNumber(file, 'player.maxHealth', player.maxHealth),
