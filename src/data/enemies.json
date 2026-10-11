@@ -1,22 +1,22 @@
 {
   "swarmer": {
-    "speed": 190,
+    "speed": 170,
     "health": 10,
     "contactDamage": 10,
-    "size": 26,
+    "size": 30,
     "colour": "#ff5a5f",
     "shape": "triangle",
     "xp": 1,
     "knockbackResistance": 0
   },
   "brute": {
-    "speed": 70,
+    "speed": 95,
     "health": 60,
     "contactDamage": 25,
-    "size": 52,
+    "size": 64,
     "colour": "#a56bff",
     "shape": "hexagon",
     "xp": 2,
-    "knockbackResistance": 0.75
+    "knockbackResistance": 0.9
   }
 }

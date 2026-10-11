@@ -1,20 +1,48 @@
 import Phaser from 'phaser';
 import { aimDirection, DEFAULT_AIM } from '../core/aim';
+import {
+  cameraScroll,
+  isOutside,
+  screenToWorld,
+  VIEW,
+  viewRect,
+  type Rect,
+  type Size,
+} from '../core/camera';
 import { chaseVelocity } from '../core/chase';
+import { playSeconds } from '../core/clock';
 import { crystalTierIndex, crystalVelocity, dropCrystal } from '../core/crystals';
 import type { EnemyConfig, GameData } from '../core/data';
-import { createDashState, dashReadiness, stepDash, type DashState } from '../core/dash';
+import {
+  createDashState,
+  dashReadiness,
+  holdDashKey,
+  stepDash,
+  type DashState,
+} from '../core/dash';
 import { createFireState, stepFire, type FireState } from '../core/fire';
 import {
   applyDamage,
   createHealth,
+  heal,
   isDead,
   isInvulnerable,
   stepHealth,
   type HealthState,
 } from '../core/health';
 import { knockbackDisplacement } from '../core/knockback';
+import { shotProfile, SLOTS, type ShotProfile } from '../core/loadout';
 import { clampToArena, moveDirection, movementDelta, type Vec2 } from '../core/movement';
+import {
+  addPendingOffers,
+  createPendingOffers,
+  hasPendingOffers,
+  openNextOffer,
+  resolveOffer,
+  type PendingOffers,
+} from '../core/offers';
+import { previewCard } from '../core/preview';
+import { createRng, type Rng } from '../core/rng';
 import {
   activeSpawnRules,
   createSpawnerState,
@@ -23,35 +51,53 @@ import {
   type SpawnRule,
 } from '../core/schedule';
 import { roomUnderCap, spawnGroup } from '../core/spawn';
+import { baseStats, type PlayerStats } from '../core/stats';
+import {
+  applyHitEffects,
+  createStatus,
+  speedMultiplier,
+  tickStatus,
+  type StatusState,
+} from '../core/status';
+import { buildStats, createBuild, shotDamage, takeCard, type Build } from '../core/upgrade';
 import { addXp, createXpState, xpForNextLevel, type XpState } from '../core/xp';
 import { Hud } from '../ui/Hud';
-import { ensureShapeTexture } from './shapes';
+import { cardView } from '../ui/UpgradeCards';
+import { colourToNumber, ensureShapeTexture } from './shapes';
+import { UPGRADE_SCENE, type UpgradeSceneData } from './UpgradeScene';
 
-export const ARENA_WIDTH = 1280;
-export const ARENA_HEIGHT = 720;
 export const ARENA_BACKGROUND = '#0b0d17';
 
-const ARENA_BORDER_COLOUR = 0x2a3050;
+/** Temporary ground: a grid so movement can be seen, and a marked strip along the world's edge. */
+const GROUND_DEPTH = -1;
+const GRID_SPACING = 160;
+const GRID_COLOUR = 0x161c30;
+const EDGE_STRIP_WIDTH = 48;
+const EDGE_STRIP_COLOUR = 0x1c2238;
+const WORLD_BORDER_WIDTH = 6;
+const WORLD_BORDER_COLOUR = 0x5a6aa0;
 
 const PLAYER_TEXTURE = 'player';
 const PROJECTILE_TEXTURE = 'projectile';
 const PROJECTILE_COLOUR = '#f4f7ff';
-const PROJECTILE_SIZE = 10;
+/** A shot that has flown this far past the edge of the view is removed, in pixels. */
+const PROJECTILE_VIEW_MARGIN = 64;
 const crystalTexture = (tier: number): string => `crystal-${tier}`;
 
 /** Enemy hit circles are a little smaller than the drawn shape, to be forgiving. */
 const ENEMY_HIT_RADIUS_FRACTION = 0.4;
 /** Gap between neighbours in a spawned group, as a multiple of enemy size. */
 const SPAWN_SPACING_FACTOR = 1.6;
-/** Longest frame the rules are stepped with, e.g. after the tab was in the background. */
-const MAX_FRAME_SECONDS = 0.1;
 const BLINKS_PER_SECOND = 12;
 const BLINK_ALPHA = 0.25;
 const HIT_FLASH_COLOUR = 0xffffff;
-const LEVEL_NOTICE_SECONDS = 1.5;
+/** Burning and chilled enemies are marked by shapes drawn over them, above the enemies. */
+const STATUS_DEPTH = 1;
+const EMBERS_PER_ENEMY = 3;
+const EMBER_RADIUS = 3;
 
 const ENEMY_DATA_KEY = 'enemy';
-const DIRECTION_DATA_KEY = 'direction';
+const SHOT_DATA_KEY = 'shot';
 const VALUE_DATA_KEY = 'value';
 
 type Sprite = Phaser.Physics.Arcade.Image;
@@ -63,16 +109,32 @@ interface EnemyState {
   health: HealthState;
   /** Seconds of hit flash left; 0 when not flashing. */
   flashSeconds: number;
+  status: StatusState;
+  /** Colours of the payloads that last set this enemy burning or slowed it. */
+  burnColour: number;
+  slowColour: number;
+}
+
+/** What a projectile carries from the moment it is fired. */
+interface Shot {
+  direction: Vec2;
+  /** Direct damage on hit. */
+  damage: number;
+  profile: ShotProfile;
 }
 
 const enemyTexture = (name: string): string => `enemy-${name}`;
 
 export class ArenaScene extends Phaser.Scene {
   private readonly gameData: GameData;
+  /** The player's stats before any boost. */
+  private readonly base: PlayerStats;
+  private readonly world: Size;
   private player!: Sprite;
   private enemies!: Phaser.Physics.Arcade.Group;
   private projectiles!: Phaser.Physics.Arcade.Group;
   private crystals!: Phaser.Physics.Arcade.Group;
+  private statusFx!: Phaser.GameObjects.Graphics;
   private hud!: Hud;
   private keys!: MoveKeys;
   private dashKey!: Phaser.Input.Keyboard.Key;
@@ -83,28 +145,43 @@ export class ArenaScene extends Phaser.Scene {
   private fire!: FireState;
   private spawner!: SpawnerState;
   private xp!: XpState;
+  private build!: Build;
+  /** The player's current numbers and shot, kept in step with the build. */
+  private stats!: PlayerStats;
+  private shot!: ShotProfile;
+  private offers!: PendingOffers;
+  private rng!: Rng;
   private aim!: Vec2;
+  /** Top-left corner of the view in the world; the camera follows the player within the world. */
+  private scroll: Vec2 = { x: 0, y: 0 };
   private elapsedSeconds = 0;
-  private levelNoticeSeconds = 0;
   private dead = false;
 
   constructor(data: GameData) {
     super('Arena');
     this.gameData = data;
+    this.base = baseStats(data.tuning);
+    this.world = data.tuning.world;
   }
 
   /** Runs at the start of every run, including after a restart, so it resets all state. */
   create(): void {
     const { player, tuning, enemies } = this.gameData;
 
-    this.health = createHealth(tuning.player.maxHealth);
+    this.setBuild(createBuild());
+    this.health = createHealth(this.stats.maxHealth);
+    this.offers = createPendingOffers();
+    this.rng = createRng(Math.floor(Math.random() * 2 ** 32));
+    // A restart cannot happen while an offer is open, but make sure none outlives a run.
+    if (this.scene.isActive(UPGRADE_SCENE)) {
+      this.scene.stop(UPGRADE_SCENE);
+    }
     this.dash = createDashState();
     this.fire = createFireState();
     this.spawner = createSpawnerState();
     this.xp = createXpState();
     this.aim = DEFAULT_AIM;
     this.elapsedSeconds = 0;
-    this.levelNoticeSeconds = 0;
     this.dead = false;
 
     const keyboard = this.input.keyboard;
@@ -122,16 +199,21 @@ export class ArenaScene extends Phaser.Scene {
     this.dashKey = keyboard.addKey(KeyCodes.SPACE);
     this.restartKey = keyboard.addKey(KeyCodes.R);
 
-    this.add
-      .graphics()
-      .lineStyle(2, ARENA_BORDER_COLOUR)
-      .strokeRect(1, 1, ARENA_WIDTH - 2, ARENA_HEIGHT - 2);
+    this.physics.world.setBounds(0, 0, this.world.width, this.world.height);
+    this.cameras.main.setBounds(0, 0, this.world.width, this.world.height);
+    this.drawGround();
 
     ensureShapeTexture(this, PLAYER_TEXTURE, player.shape, player.colour, player.size);
     for (const [name, config] of Object.entries(enemies)) {
       ensureShapeTexture(this, enemyTexture(name), config.shape, config.colour, config.size);
     }
-    ensureShapeTexture(this, PROJECTILE_TEXTURE, 'circle', PROJECTILE_COLOUR, PROJECTILE_SIZE);
+    ensureShapeTexture(
+      this,
+      PROJECTILE_TEXTURE,
+      'circle',
+      PROJECTILE_COLOUR,
+      tuning.fire.projectileSize,
+    );
     tuning.crystals.tiers.forEach((tier, index) => {
       ensureShapeTexture(this, crystalTexture(index), 'square', tier.colour, tier.size);
     });
@@ -139,7 +221,14 @@ export class ArenaScene extends Phaser.Scene {
     this.crystals = this.physics.add.group();
     this.projectiles = this.physics.add.group();
     this.enemies = this.physics.add.group();
-    this.player = this.physics.add.image(ARENA_WIDTH / 2, ARENA_HEIGHT / 2, PLAYER_TEXTURE);
+    this.statusFx = this.add.graphics().setDepth(STATUS_DEPTH);
+    // The run starts in the middle of the world, far from every edge.
+    this.player = this.physics.add.image(
+      this.world.width / 2,
+      this.world.height / 2,
+      PLAYER_TEXTURE,
+    );
+    this.followPlayer();
 
     // Enemies push each other apart instead of stacking into one shape.
     this.physics.add.collider(this.enemies, this.enemies);
@@ -165,20 +254,132 @@ export class ArenaScene extends Phaser.Scene {
       return;
     }
 
-    const deltaSeconds = Math.min(deltaMs / 1000, MAX_FRAME_SECONDS);
+    this.openPendingOffer();
+    // Play time comes only from here, so nothing advances or builds up during an offer.
+    const paused = hasPendingOffers(this.offers);
+    const deltaSeconds = playSeconds(deltaMs, paused);
+    if (paused) {
+      // A dash key held through the offer is not a fresh press when play resumes.
+      this.dash = holdDashKey(this.dash, this.dashKey.isDown);
+      return;
+    }
     this.elapsedSeconds += deltaSeconds;
-    this.levelNoticeSeconds = Math.max(0, this.levelNoticeSeconds - deltaSeconds);
 
-    this.updateAim();
     this.movePlayer(deltaSeconds);
+    this.followPlayer();
+    this.updateAim();
     this.health = stepHealth(this.health, deltaSeconds);
     this.blinkWhileInvulnerable();
     this.fireShots(deltaSeconds);
     this.spawnEnemies(deltaSeconds);
     this.updateEnemies(deltaSeconds);
     this.attractCrystals();
-    this.removeProjectilesOutsideArena();
+    this.removeSpentProjectiles();
     this.updateHud();
+  }
+
+  private setBuild(build: Build): void {
+    this.build = build;
+    this.stats = buildStats(build, this.base);
+    this.shot = shotProfile(build.loadout);
+  }
+
+  /**
+   * Opens the offer for the next unresolved level-up and pauses play. The offer
+   * is built here, when it opens, so it reflects the choice made in the last one.
+   */
+  private openPendingOffer(): void {
+    if (!hasPendingOffers(this.offers) || this.offers.active) {
+      return;
+    }
+    const { parts, boosts, tuning } = this.gameData;
+    this.offers = openNextOffer(this.offers, { parts, boosts }, this.build.loadout, this.rng);
+    const offer = this.offers.active;
+    if (!offer) {
+      return;
+    }
+
+    this.physics.pause();
+    const data: UpgradeSceneData = {
+      view: {
+        level: this.xp.level - this.offers.pending + 1,
+        cards: offer.cards.map((card) => cardView(card, previewCard(card, this.build, this.base))),
+        skipHeal: tuning.skipHeal,
+        waiting: this.offers.pending - 1,
+      },
+      onChoose: (index) => this.chooseCard(index),
+      onSkip: () => this.skipOffer(),
+    };
+    this.scene.launch(UPGRADE_SCENE, data);
+  }
+
+  private chooseCard(index: number): void {
+    const card = this.offers.active?.cards[index];
+    if (!card) {
+      return;
+    }
+    const taken = takeCard(this.build, this.health, card, this.base);
+    this.health = taken.health;
+    this.setBuild(taken.build);
+    this.closeOffer();
+  }
+
+  private skipOffer(): void {
+    if (!this.offers.active) {
+      return;
+    }
+    this.health = heal(this.health, this.gameData.tuning.skipHeal);
+    this.closeOffer();
+  }
+
+  /** Play resumes only when no level-up is left to choose; otherwise the next offer opens. */
+  private closeOffer(): void {
+    this.offers = resolveOffer(this.offers);
+    this.scene.stop(UPGRADE_SCENE);
+    if (!hasPendingOffers(this.offers)) {
+      this.physics.resume();
+    }
+    this.updateHud();
+  }
+
+  /** Temporary environment: enough to see the world move and to see its edge coming. */
+  private drawGround(): void {
+    const { width, height } = this.world;
+    const ground = this.add.graphics().setDepth(GROUND_DEPTH);
+
+    ground.lineStyle(1, GRID_COLOUR);
+    for (let x = GRID_SPACING; x < width; x += GRID_SPACING) {
+      ground.lineBetween(x, 0, x, height);
+    }
+    for (let y = GRID_SPACING; y < height; y += GRID_SPACING) {
+      ground.lineBetween(0, y, width, y);
+    }
+
+    ground.fillStyle(EDGE_STRIP_COLOUR);
+    ground.fillRect(0, 0, width, EDGE_STRIP_WIDTH);
+    ground.fillRect(0, height - EDGE_STRIP_WIDTH, width, EDGE_STRIP_WIDTH);
+    ground.fillRect(0, 0, EDGE_STRIP_WIDTH, height);
+    ground.fillRect(width - EDGE_STRIP_WIDTH, 0, EDGE_STRIP_WIDTH, height);
+
+    const half = WORLD_BORDER_WIDTH / 2;
+    ground
+      .lineStyle(WORLD_BORDER_WIDTH, WORLD_BORDER_COLOUR)
+      .strokeRect(half, half, width - WORLD_BORDER_WIDTH, height - WORLD_BORDER_WIDTH);
+  }
+
+  /**
+   * Keeps the player in the middle of the view, except where the view has
+   * reached an edge of the world and stops. The player is confined by the same
+   * world size, so the two always agree.
+   */
+  private followPlayer(): void {
+    this.scroll = cameraScroll(this.player, VIEW, this.world);
+    this.cameras.main.setScroll(this.scroll.x, this.scroll.y);
+  }
+
+  /** The part of the world on screen. */
+  private view(): Rect {
+    return viewRect(this.scroll, VIEW);
   }
 
   private updateAim(): void {
@@ -187,7 +388,9 @@ export class ArenaScene extends Phaser.Scene {
     if (pointer.moveTime === 0 && pointer.downTime === 0) {
       return;
     }
-    this.aim = aimDirection(this.player, { x: pointer.worldX, y: pointer.worldY }, this.aim);
+    // The cursor is a point on screen; the camera may have scrolled since it last moved.
+    const cursor = screenToWorld({ x: pointer.x, y: pointer.y }, this.scroll);
+    this.aim = aimDirection(this.player, cursor, this.aim);
   }
 
   private movePlayer(deltaSeconds: number): void {
@@ -214,12 +417,13 @@ export class ArenaScene extends Phaser.Scene {
     // The burst replaces normal movement, so the locked direction cannot be steered.
     const step = dashStep.dashing
       ? dashStep.displacement
-      : movementDelta(input, tuning.moveSpeed, deltaSeconds);
+      : movementDelta(input, this.stats.moveSpeed, deltaSeconds);
+    // Walking and dashing both end here, so neither can leave the world.
     const next = clampToArena(
       { x: this.player.x + step.x, y: this.player.y + step.y },
       player.size,
-      ARENA_WIDTH,
-      ARENA_HEIGHT,
+      this.world.width,
+      this.world.height,
     );
     this.player.setPosition(next.x, next.y);
   }
@@ -233,7 +437,7 @@ export class ArenaScene extends Phaser.Scene {
 
   private fireShots(deltaSeconds: number): void {
     const { fire, caps } = this.gameData.tuning;
-    const fireStep = stepFire(this.fire, fire.shotsPerSecond, deltaSeconds);
+    const fireStep = stepFire(this.fire, this.stats.fireRate, deltaSeconds);
     this.fire = fireStep.state;
 
     const shots = roomUnderCap(fireStep.shots, this.projectiles.countActive(), caps.maxProjectiles);
@@ -243,9 +447,20 @@ export class ArenaScene extends Phaser.Scene {
         this.player.y,
         PROJECTILE_TEXTURE,
       ) as Sprite;
-      projectile.setCircle(PROJECTILE_SIZE / 2);
+      // The hit circle is centred on the shot and may be larger than it looks.
+      const hitOffset = fire.projectileSize / 2 - fire.projectileHitRadius;
+      projectile.setCircle(fire.projectileHitRadius, hitOffset, hitOffset);
       projectile.setVelocity(this.aim.x * fire.projectileSpeed, this.aim.y * fire.projectileSpeed);
-      projectile.setData(DIRECTION_DATA_KEY, this.aim);
+      // The shot keeps the damage and payload it was fired with, whatever is installed later.
+      const shot: Shot = {
+        direction: this.aim,
+        damage: shotDamage(this.build, this.base),
+        profile: this.shot,
+      };
+      projectile.setData(SHOT_DATA_KEY, shot);
+      if (shot.profile.colour) {
+        projectile.setTint(colourToNumber(shot.profile.colour));
+      }
     }
   }
 
@@ -267,9 +482,9 @@ export class ArenaScene extends Phaser.Scene {
 
     const positions = spawnGroup({
       count: roomUnderCap(rule.groupSize, this.enemies.countActive(), caps.maxEnemies),
-      arenaWidth: ARENA_WIDTH,
-      arenaHeight: ARENA_HEIGHT,
-      inset: config.size,
+      world: this.world,
+      view: this.view(),
+      margin: config.size,
       spacing: config.size * SPAWN_SPACING_FACTOR,
       player: this.player,
       minDistanceFromPlayer: spawn.minDistanceFromPlayer,
@@ -280,17 +495,37 @@ export class ArenaScene extends Phaser.Scene {
     for (const position of positions) {
       const enemy = this.enemies.create(position.x, position.y, enemyTexture(rule.enemy)) as Sprite;
       enemy.setCircle(hitRadius, hitOffset, hitOffset);
-      const state: EnemyState = { config, health: createHealth(config.health), flashSeconds: 0 };
+      const state: EnemyState = {
+        config,
+        health: createHealth(config.health),
+        flashSeconds: 0,
+        status: createStatus(),
+        burnColour: HIT_FLASH_COLOUR,
+        slowColour: HIT_FLASH_COLOUR,
+      };
       enemy.setData(ENEMY_DATA_KEY, state);
     }
   }
 
   private updateEnemies(deltaSeconds: number): void {
-    for (const child of this.enemies.getChildren()) {
+    const { tickIntervalSeconds } = this.gameData.tuning.burn;
+    this.statusFx.clear();
+    // A burn can kill, which removes the enemy from the group while it is being walked.
+    for (const child of [...this.enemies.getChildren()]) {
       const enemy = child as Sprite;
       const state = enemy.getData(ENEMY_DATA_KEY) as EnemyState;
 
-      const velocity = chaseVelocity(enemy, this.player, state.config.speed);
+      const tick = tickStatus(state.status, state.health, tickIntervalSeconds, deltaSeconds);
+      state.status = tick.status;
+      state.health = tick.health;
+      if (tick.killed) {
+        this.killEnemy(enemy);
+        continue;
+      }
+      this.drawStatus(enemy, state);
+
+      const speed = state.config.speed * speedMultiplier(state.status);
+      const velocity = chaseVelocity(enemy, this.player, speed);
       enemy.setVelocity(velocity.x, velocity.y);
       if (velocity.x !== 0 || velocity.y !== 0) {
         // Shapes are drawn pointing up, so turn the tip towards the player.
@@ -306,8 +541,37 @@ export class ArenaScene extends Phaser.Scene {
     }
   }
 
+  /** Marks a chilled enemy with a steady wash and ring, and a burning one with flickering embers. */
+  private drawStatus(enemy: Sprite, state: EnemyState): void {
+    const { burn, slow } = state.status;
+    const radius = state.config.size / 2;
+    if (slow) {
+      this.statusFx.fillStyle(state.slowColour, 0.4).fillCircle(enemy.x, enemy.y, radius * 0.9);
+      this.statusFx
+        .lineStyle(2, state.slowColour, 0.95)
+        .strokeCircle(enemy.x, enemy.y, radius * 1.15);
+    }
+    if (burn) {
+      // Driven by run time, so the flames freeze with everything else during an offer.
+      const flicker = 0.5 + 0.5 * Math.sin(this.elapsedSeconds * 20 + enemy.x * 0.05);
+      this.statusFx
+        .fillStyle(state.burnColour, 0.25 + 0.25 * flicker)
+        .fillCircle(enemy.x, enemy.y, radius * 0.9);
+      this.statusFx.fillStyle(state.burnColour, 0.95);
+      for (let ember = 0; ember < EMBERS_PER_ENEMY; ember++) {
+        const angle = this.elapsedSeconds * 5 + (ember * 2 * Math.PI) / EMBERS_PER_ENEMY;
+        this.statusFx.fillCircle(
+          enemy.x + Math.cos(angle) * radius * 1.1,
+          enemy.y + Math.sin(angle) * radius * 1.1,
+          EMBER_RADIUS,
+        );
+      }
+    }
+  }
+
   private attractCrystals(): void {
-    const { pickupRange, crystals } = this.gameData.tuning;
+    const { crystals } = this.gameData.tuning;
+    const { pickupRange } = this.stats;
     for (const child of this.crystals.getChildren()) {
       const crystal = child as Sprite;
       const velocity = crystalVelocity(crystal, this.player, pickupRange, crystals.attractSpeed);
@@ -315,16 +579,13 @@ export class ArenaScene extends Phaser.Scene {
     }
   }
 
-  private removeProjectilesOutsideArena(): void {
-    const margin = PROJECTILE_SIZE;
+  /** Removes shots that have left the world or flown well past the edge of the view. */
+  private removeSpentProjectiles(): void {
+    const world: Rect = { x: 0, y: 0, ...this.world };
+    const view = this.view();
     for (const child of [...this.projectiles.getChildren()]) {
       const projectile = child as Sprite;
-      if (
-        projectile.x < -margin ||
-        projectile.x > ARENA_WIDTH + margin ||
-        projectile.y < -margin ||
-        projectile.y > ARENA_HEIGHT + margin
-      ) {
+      if (isOutside(projectile, world) || isOutside(projectile, view, PROJECTILE_VIEW_MARGIN)) {
         projectile.destroy();
       }
     }
@@ -335,17 +596,24 @@ export class ArenaScene extends Phaser.Scene {
     if (!projectile.active || !enemy.active) {
       return;
     }
-    const hitDirection = projectile.getData(DIRECTION_DATA_KEY) as Vec2;
+    const shot = projectile.getData(SHOT_DATA_KEY) as Shot;
+    const hitDirection = shot.direction;
     projectile.destroy();
 
-    const { fire, hitFeedback } = this.gameData.tuning;
+    const { hitFeedback } = this.gameData.tuning;
     const state = enemy.getData(ENEMY_DATA_KEY) as EnemyState;
-    state.health = applyDamage(state.health, fire.projectileDamage).state;
+    state.health = applyDamage(state.health, shot.damage).state;
 
     if (isDead(state.health)) {
-      this.dropXp(enemy.x, enemy.y, state.config.xp);
-      enemy.destroy();
+      this.killEnemy(enemy);
       return;
+    }
+
+    state.status = applyHitEffects(state.status, shot.profile);
+    if (shot.profile.colour) {
+      const colour = colourToNumber(shot.profile.colour);
+      state.burnColour = shot.profile.burn ? colour : state.burnColour;
+      state.slowColour = shot.profile.slow ? colour : state.slowColour;
     }
 
     if (hitFeedback.flashSeconds > 0) {
@@ -360,10 +628,23 @@ export class ArenaScene extends Phaser.Scene {
     const pushed = clampToArena(
       { x: enemy.x + push.x, y: enemy.y + push.y },
       state.config.size,
-      ARENA_WIDTH,
-      ARENA_HEIGHT,
+      this.world.width,
+      this.world.height,
     );
     enemy.setPosition(pushed.x, pushed.y);
+  }
+
+  /**
+   * The one way an enemy dies, whether a shot or a burn killed it: it drops its
+   * XP and is removed. An enemy already removed is ignored, so it happens once.
+   */
+  private killEnemy(enemy: Sprite): void {
+    if (!enemy.active) {
+      return;
+    }
+    const state = enemy.getData(ENEMY_DATA_KEY) as EnemyState;
+    this.dropXp(enemy.x, enemy.y, state.config.xp);
+    enemy.destroy();
   }
 
   private hitPlayer(enemy: Sprite): void {
@@ -383,7 +664,7 @@ export class ArenaScene extends Phaser.Scene {
       // Phaser takes the shake strength as a fraction of the view size.
       this.cameras.main.shake(
         hitFeedback.shakeSeconds * 1000,
-        hitFeedback.shakeIntensity / ARENA_WIDTH,
+        hitFeedback.shakeIntensity / VIEW.width,
       );
     }
     if (isDead(this.health)) {
@@ -425,12 +706,8 @@ export class ArenaScene extends Phaser.Scene {
 
     const gain = addXp(this.xp, value, this.gameData.tuning.xp);
     this.xp = gain.state;
-    if (gain.levelsGained > 0) {
-      // TEMPORARY (M2): a level-up only shows a notice. Play does not pause and
-      // nothing is awarded. M3 replaces this with the approved interaction:
-      // pause and offer upgrade cards.
-      this.levelNoticeSeconds = LEVEL_NOTICE_SECONDS;
-    }
+    // Each level gained owes one upgrade offer; the next frame opens the first.
+    this.offers = addPendingOffers(this.offers, gain.levelsGained);
   }
 
   private die(): void {
@@ -450,10 +727,15 @@ export class ArenaScene extends Phaser.Scene {
       xp: this.xp.xp,
       xpForNextLevel: xpForNextLevel(this.xp.level, this.gameData.tuning.xp),
       elapsedSeconds: this.elapsedSeconds,
-      levelNotice:
-        this.levelNoticeSeconds > 0
-          ? { level: this.xp.level, opacity: this.levelNoticeSeconds / LEVEL_NOTICE_SECONDS }
-          : null,
+      baseMaxHealth: this.base.maxHealth,
+      slots: SLOTS.map((slot) => {
+        const part = this.build.loadout[slot];
+        return {
+          label: slot.charAt(0).toUpperCase() + slot.slice(1),
+          part: part?.name ?? null,
+          colour: part?.colour ?? null,
+        };
+      }),
     });
   }
 }

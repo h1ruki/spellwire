@@ -1,7 +1,8 @@
 import type Phaser from 'phaser';
 
 const MARGIN = 20;
-const HEALTH_BAR = { width: 240, height: 16 };
+/** The bar is `width` long at the starting maximum health and grows with it up to `maxWidth`. */
+const HEALTH_BAR = { width: 200, maxWidth: 320, height: 16 };
 const DASH_BAR = { width: 120, height: 8 };
 const DASH_BAR_Y = MARGIN + HEALTH_BAR.height + 10;
 const XP_BAR = { width: 400, height: 10 };
@@ -14,7 +15,8 @@ const DASH_CHARGING_COLOUR = 0x4a5578;
 const XP_COLOUR = 0xffd23f;
 const TEXT_COLOUR = '#dfe6ff';
 const TEXT_DIM_COLOUR = '#7f8ab0';
-const NOTICE_COLOUR = '#ffd23f';
+const SLOT_ROW_HEIGHT = 20;
+const SLOT_VALUE_X = MARGIN + 90;
 const HUD_DEPTH = 100;
 
 const LOW_HEALTH_FRACTION = 0.3;
@@ -28,8 +30,25 @@ export interface HudView {
   xp: number;
   xpForNextLevel: number;
   elapsedSeconds: number;
-  /** The "Level N" notice, with `opacity` from 0 to 1, or null when hidden. */
-  levelNotice: { level: number; opacity: number } | null;
+  /** Maximum health at the start of a run; the health bar is drawn relative to it. */
+  baseMaxHealth: number;
+  /** The loadout's slots, in display order. */
+  slots: readonly SlotView[];
+}
+
+export interface SlotView {
+  /** Slot name, e.g. "Payload". */
+  label: string;
+  /** Name of the installed part, or null when the slot is empty. */
+  part: string | null;
+  /** Hex colour of the installed part, or null when the slot is empty. */
+  colour: string | null;
+}
+
+/** Width of the health bar in pixels: longer with more maximum health, up to a limit. */
+export function healthBarWidth(maxHealth: number, baseMaxHealth: number): number {
+  const width = HEALTH_BAR.width * (maxHealth / baseMaxHealth);
+  return Math.max(0, Math.min(HEALTH_BAR.maxWidth, width));
 }
 
 /** Run time as minutes and seconds, e.g. 2:05. */
@@ -39,7 +58,10 @@ export function formatRunTime(elapsedSeconds: number): string {
   return `${Math.floor(whole / 60)}:${seconds < 10 ? '0' : ''}${seconds}`;
 }
 
-/** Health, dash, XP, level, run time and the death prompt. Display only. */
+/**
+ * Health, dash, XP, level, run time, the loadout and the death prompt. Display
+ * only. Everything is fixed to the screen and does not scroll with the world.
+ */
 export class Hud {
   private readonly scene: Phaser.Scene;
   private readonly bars: Phaser.GameObjects.Graphics;
@@ -47,16 +69,17 @@ export class Hud {
   private readonly dashText: Phaser.GameObjects.Text;
   private readonly levelText: Phaser.GameObjects.Text;
   private readonly timeText: Phaser.GameObjects.Text;
-  private readonly noticeText: Phaser.GameObjects.Text;
+  private readonly slotLabels: Phaser.GameObjects.Text[] = [];
+  private readonly slotValues: Phaser.GameObjects.Text[] = [];
   private readonly xpBarX: number;
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
-    const { width, height } = scene.scale;
+    const { width } = scene.scale;
     this.xpBarX = (width - XP_BAR.width) / 2;
 
-    this.bars = scene.add.graphics().setDepth(HUD_DEPTH);
-    this.healthText = this.label(MARGIN + HEALTH_BAR.width + 12, MARGIN + HEALTH_BAR.height / 2, 16)
+    this.bars = scene.add.graphics().setDepth(HUD_DEPTH).setScrollFactor(0);
+    this.healthText = this.label(0, MARGIN + HEALTH_BAR.height / 2, 16)
       .setOrigin(0, 0.5)
       .setColor(TEXT_COLOUR);
     this.dashText = this.label(
@@ -70,10 +93,6 @@ export class Hud {
     this.timeText = this.label(width - MARGIN, MARGIN, 20)
       .setOrigin(1, 0)
       .setColor(TEXT_COLOUR);
-    this.noticeText = this.label(width / 2, height * 0.28, 40)
-      .setOrigin(0.5)
-      .setColor(NOTICE_COLOUR)
-      .setVisible(false);
   }
 
   update(view: HudView): void {
@@ -82,8 +101,13 @@ export class Hud {
     const xpFraction = clamp01(view.xp / view.xpForNextLevel);
     const dashReady = dashFraction >= 1;
 
+    const healthBar = {
+      width: healthBarWidth(view.maxHealth, view.baseMaxHealth),
+      height: HEALTH_BAR.height,
+    };
+
     this.bars.clear();
-    this.bar(MARGIN, MARGIN, HEALTH_BAR, healthFraction, healthColour(healthFraction));
+    this.bar(MARGIN, MARGIN, healthBar, healthFraction, healthColour(healthFraction));
     this.bar(
       MARGIN,
       DASH_BAR_Y,
@@ -93,7 +117,9 @@ export class Hud {
     );
     this.bar(this.xpBarX, MARGIN, XP_BAR, xpFraction, XP_COLOUR);
 
-    this.healthText.setText(`${Math.ceil(view.health)} / ${view.maxHealth}`);
+    this.healthText
+      .setX(MARGIN + healthBar.width + 12)
+      .setText(`${Math.ceil(view.health)} / ${Math.round(view.maxHealth)}`);
     this.dashText
       .setText(dashReady ? 'DASH READY' : 'DASH')
       .setColor(dashReady ? TEXT_COLOUR : TEXT_DIM_COLOUR);
@@ -101,15 +127,21 @@ export class Hud {
       `Level ${view.level}   ${Math.floor(view.xp)} / ${view.xpForNextLevel} XP`,
     );
     this.timeText.setText(formatRunTime(view.elapsedSeconds));
+    this.updateSlots(view.slots);
+  }
 
-    if (view.levelNotice) {
-      this.noticeText
-        .setText(`Level ${view.levelNotice.level}`)
-        .setAlpha(clamp01(view.levelNotice.opacity))
-        .setVisible(true);
-    } else {
-      this.noticeText.setVisible(false);
-    }
+  /** One row per slot in the bottom-left corner: the slot name and what is in it. */
+  private updateSlots(slots: readonly SlotView[]): void {
+    const top = this.scene.scale.height - MARGIN - slots.length * SLOT_ROW_HEIGHT;
+    slots.forEach((slot, index) => {
+      const y = top + index * SLOT_ROW_HEIGHT;
+      const label = (this.slotLabels[index] ??= this.label(MARGIN, y, 14).setColor(
+        TEXT_DIM_COLOUR,
+      ));
+      const value = (this.slotValues[index] ??= this.label(SLOT_VALUE_X, y, 14));
+      label.setText(slot.label.toUpperCase());
+      value.setText(slot.part ?? 'Empty').setColor(slot.colour ?? TEXT_DIM_COLOUR);
+    });
   }
 
   showDeathPrompt(): void {
@@ -123,12 +155,14 @@ export class Hud {
         padding: { x: 20, y: 12 },
       })
       .setOrigin(0.5)
+      .setScrollFactor(0)
       .setDepth(HUD_DEPTH + 1);
   }
 
   private label(x: number, y: number, fontSize: number): Phaser.GameObjects.Text {
     return this.scene.add
       .text(x, y, '', { fontFamily: 'monospace', fontSize: `${fontSize}px` })
+      .setScrollFactor(0)
       .setDepth(HUD_DEPTH);
   }
 

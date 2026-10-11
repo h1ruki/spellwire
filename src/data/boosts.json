@@ -1,0 +1,42 @@
+[
+  {
+    "id": "fire-rate",
+    "stat": "fireRate",
+    "name": "Fire Rate",
+    "description": "Shoot more often.",
+    "amount": 10,
+    "unit": "percent"
+  },
+  {
+    "id": "damage",
+    "stat": "damage",
+    "name": "Damage",
+    "description": "Every shot hits harder. Burn is not affected.",
+    "amount": 10,
+    "unit": "percent"
+  },
+  {
+    "id": "move-speed",
+    "stat": "moveSpeed",
+    "name": "Move Speed",
+    "description": "Move faster.",
+    "amount": 8,
+    "unit": "percent"
+  },
+  {
+    "id": "max-health",
+    "stat": "maxHealth",
+    "name": "Max Health",
+    "description": "More maximum health, and that much health back now.",
+    "amount": 20,
+    "unit": "flat"
+  },
+  {
+    "id": "pickup-range",
+    "stat": "pickupRange",
+    "name": "Pickup Range",
+    "description": "Pull XP crystals in from further away.",
+    "amount": 25,
+    "unit": "percent"
+  }
+]

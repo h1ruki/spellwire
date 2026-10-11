@@ -1,4 +1,8 @@
 {
+  "world": {
+    "width": 3840,
+    "height": 2160
+  },
   "moveSpeed": 320,
   "dash": {
     "distance": 180,
@@ -8,7 +12,9 @@
   "fire": {
     "shotsPerSecond": 3,
     "projectileSpeed": 700,
-    "projectileDamage": 10
+    "projectileDamage": 10,
+    "projectileSize": 12,
+    "projectileHitRadius": 8
   },
   "player": {
     "maxHealth": 100,
@@ -39,5 +45,9 @@
     "knockbackStrength": 24,
     "shakeIntensity": 5,
     "shakeSeconds": 0.15
+  },
+  "skipHeal": 10,
+  "burn": {
+    "tickIntervalSeconds": 0.5
   }
 }

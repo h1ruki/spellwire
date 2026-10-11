@@ -1,16 +1,23 @@
+import boostsJson from '../data/boosts.json';
 import enemiesJson from '../data/enemies.json';
+import partsJson from '../data/parts.json';
 import playerJson from '../data/player.json';
 import spawnsJson from '../data/spawns.json';
 import tuningJson from '../data/tuning.json';
+import { VIEW, type Size } from './camera';
 import type { CrystalTier } from './crystals';
 import type { DashTuning } from './dash';
+import type { BurnSpec, Part, SlowSpec } from './loadout';
 import type { SpawnPhase, SpawnRule } from './schedule';
+import { BOOST_UNITS, STATS, type Boost, type BoostUnit, type Stat } from './stats';
 import type { XpTuning } from './xp';
 
 export const PLAYER_FILE = 'src/data/player.json';
 export const TUNING_FILE = 'src/data/tuning.json';
 export const ENEMIES_FILE = 'src/data/enemies.json';
 export const SPAWNS_FILE = 'src/data/spawns.json';
+export const PARTS_FILE = 'src/data/parts.json';
+export const BOOSTS_FILE = 'src/data/boosts.json';
 
 export const SHAPES = ['square', 'circle', 'triangle', 'hexagon'] as const;
 export type Shape = (typeof SHAPES)[number];
@@ -31,6 +38,10 @@ export interface FireTuning {
   /** Pixels per second. */
   projectileSpeed: number;
   projectileDamage: number;
+  /** Width and height of a shot as drawn, in pixels. */
+  projectileSize: number;
+  /** Radius a shot hits with, in pixels; larger than it looks makes aiming more forgiving. */
+  projectileHitRadius: number;
 }
 
 export interface PlayerHealthTuning {
@@ -68,7 +79,14 @@ export interface HitFeedbackTuning {
   shakeSeconds: number;
 }
 
+export interface BurnTuning {
+  /** How often a burning enemy takes its burn damage. */
+  tickIntervalSeconds: number;
+}
+
 export interface Tuning {
+  /** The finite world the run takes place in, in pixels; at least as large as the view. */
+  world: Size;
   /** Player movement speed in pixels per second. */
   moveSpeed: number;
   dash: DashTuning;
@@ -81,6 +99,9 @@ export interface Tuning {
   pickupRange: number;
   crystals: CrystalTuning;
   hitFeedback: HitFeedbackTuning;
+  /** Health restored by skipping an upgrade offer, never above the maximum. */
+  skipHeal: number;
+  burn: BurnTuning;
 }
 
 export interface EnemyConfig {
@@ -109,6 +130,10 @@ export interface GameData {
   enemies: Enemies;
   /** Spawn timeline, sorted by start time. */
   spawns: SpawnPhase[];
+  /** Weapon parts that can be offered, in file order. */
+  parts: Part[];
+  /** Stat boosts that can be offered, in file order. */
+  boosts: Boost[];
 }
 
 /** Thrown when a data file fails validation; the message names the file and field. */
@@ -170,6 +195,23 @@ function positiveInteger(file: string, field: string, value: unknown): number {
 function nonNegativeNumber(file: string, field: string, value: unknown): number {
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
     throw new DataError(file, field, `must be a number of 0 or more, got ${JSON.stringify(value)}`);
+  }
+  return value;
+}
+
+function atLeast(
+  file: string,
+  field: string,
+  value: unknown,
+  minimum: number,
+  why: string,
+): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < minimum) {
+    throw new DataError(
+      file,
+      field,
+      `must be a number of ${minimum} or more (${why}), got ${JSON.stringify(value)}`,
+    );
   }
   return value;
 }
@@ -250,6 +292,7 @@ export function parseTuning(raw: unknown): Tuning {
   const record = asRecord(file, raw);
   const moveSpeed = positiveNumber(file, 'moveSpeed', record.moveSpeed);
 
+  const world = section(file, record, 'world');
   const dash = section(file, record, 'dash');
   const fire = section(file, record, 'fire');
   const player = section(file, record, 'player');
@@ -258,8 +301,13 @@ export function parseTuning(raw: unknown): Tuning {
   const xp = section(file, record, 'xp');
   const crystals = section(file, record, 'crystals');
   const hitFeedback = section(file, record, 'hitFeedback');
+  const burn = section(file, record, 'burn');
 
   return {
+    world: {
+      width: atLeast(file, 'world.width', world.width, VIEW.width, 'the width of the view'),
+      height: atLeast(file, 'world.height', world.height, VIEW.height, 'the height of the view'),
+    },
     moveSpeed,
     dash: {
       distance: positiveNumber(file, 'dash.distance', dash.distance),
@@ -270,6 +318,12 @@ export function parseTuning(raw: unknown): Tuning {
       shotsPerSecond: positiveNumber(file, 'fire.shotsPerSecond', fire.shotsPerSecond),
       projectileSpeed: positiveNumber(file, 'fire.projectileSpeed', fire.projectileSpeed),
       projectileDamage: positiveNumber(file, 'fire.projectileDamage', fire.projectileDamage),
+      projectileSize: positiveNumber(file, 'fire.projectileSize', fire.projectileSize),
+      projectileHitRadius: positiveNumber(
+        file,
+        'fire.projectileHitRadius',
+        fire.projectileHitRadius,
+      ),
     },
     player: {
       maxHealth: positiveNumber(file, 'player.maxHealth', player.maxHealth),
@@ -313,6 +367,14 @@ export function parseTuning(raw: unknown): Tuning {
         hitFeedback.shakeIntensity,
       ),
       shakeSeconds: nonNegativeNumber(file, 'hitFeedback.shakeSeconds', hitFeedback.shakeSeconds),
+    },
+    skipHeal: positiveNumber(file, 'skipHeal', record.skipHeal),
+    burn: {
+      tickIntervalSeconds: positiveNumber(
+        file,
+        'burn.tickIntervalSeconds',
+        burn.tickIntervalSeconds,
+      ),
     },
   };
 }
@@ -417,6 +479,140 @@ export function parseSpawnTimeline(raw: unknown, enemyNames: readonly string[]):
   return timeline;
 }
 
+function text(file: string, field: string, value: unknown): string {
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new DataError(
+      file,
+      field,
+      `must be text that is not empty, got ${JSON.stringify(value)}`,
+    );
+  }
+  return value;
+}
+
+function oneOf<T extends string>(
+  file: string,
+  field: string,
+  value: unknown,
+  allowed: readonly T[],
+): T {
+  if (typeof value !== 'string' || !allowed.includes(value as T)) {
+    const list = allowed.map((option) => `"${option}"`).join(', ');
+    throw new DataError(file, field, `must be one of ${list}, got ${JSON.stringify(value)}`);
+  }
+  return value as T;
+}
+
+/** A list of objects that each carry their own "id", e.g. the parts file. */
+function entries(file: string, raw: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(raw) || raw.length === 0) {
+    throw new Error(`${file}: expected a list with at least one entry, got ${JSON.stringify(raw)}`);
+  }
+  const seen: string[] = [];
+  return raw.map((entry: unknown, index) => {
+    if (!isRecord(entry)) {
+      throw new DataError(file, `[${index}]`, `must be an object, got ${JSON.stringify(entry)}`);
+    }
+    const id = text(file, `[${index}].id`, entry.id);
+    if (seen.includes(id)) {
+      throw new DataError(
+        file,
+        `[${index}].id`,
+        `must not repeat an earlier id, got "${id}" twice`,
+      );
+    }
+    seen.push(id);
+    return entry;
+  });
+}
+
+/** An effect a part may leave out, such as "burn" on a part that does not burn. */
+function optionalSection(
+  file: string,
+  field: string,
+  value: unknown,
+): Record<string, unknown> | null {
+  if (value === undefined) {
+    return null;
+  }
+  if (!isRecord(value)) {
+    throw new DataError(file, field, `must be an object or left out, got ${JSON.stringify(value)}`);
+  }
+  return value;
+}
+
+function parseBurn(file: string, field: string, raw: unknown): BurnSpec | null {
+  const burn = optionalSection(file, field, raw);
+  return (
+    burn && {
+      durationSeconds: positiveNumber(file, `${field}.durationSeconds`, burn.durationSeconds),
+      totalDamage: positiveNumber(file, `${field}.totalDamage`, burn.totalDamage),
+    }
+  );
+}
+
+function parseSlow(file: string, field: string, raw: unknown): SlowSpec | null {
+  const slow = optionalSection(file, field, raw);
+  if (!slow) {
+    return null;
+  }
+  const percent = slow.percent;
+  if (typeof percent !== 'number' || !Number.isFinite(percent) || percent <= 0 || percent > 100) {
+    throw new DataError(
+      file,
+      `${field}.percent`,
+      `must be a number above 0 and at most 100, got ${JSON.stringify(percent)}`,
+    );
+  }
+  return {
+    percent,
+    durationSeconds: positiveNumber(file, `${field}.durationSeconds`, slow.durationSeconds),
+  };
+}
+
+/**
+ * Validates the weapon parts. Only payloads exist so far, so a part for the
+ * trigger or modifier slot is rejected instead of being offered and doing
+ * nothing. A payload never lowers direct damage below the plain shot's.
+ */
+export function parseParts(raw: unknown): Part[] {
+  const file = PARTS_FILE;
+  return entries(file, raw).map((entry, index) => {
+    const at = `[${index}]`;
+    return {
+      id: text(file, `${at}.id`, entry.id),
+      slot: oneOf(file, `${at}.slot`, entry.slot, ['payload'] as const),
+      name: text(file, `${at}.name`, entry.name),
+      description: text(file, `${at}.description`, entry.description),
+      colour: hexColour(file, `${at}.colour`, entry.colour),
+      damageMultiplier: atLeast(
+        file,
+        `${at}.damageMultiplier`,
+        entry.damageMultiplier,
+        1,
+        'no payload hits softer than the plain shot',
+      ),
+      burn: parseBurn(file, `${at}.burn`, entry.burn),
+      slow: parseSlow(file, `${at}.slow`, entry.slow),
+    };
+  });
+}
+
+export function parseBoosts(raw: unknown): Boost[] {
+  const file = BOOSTS_FILE;
+  return entries(file, raw).map((entry, index) => {
+    const at = `[${index}]`;
+    return {
+      id: text(file, `${at}.id`, entry.id),
+      stat: oneOf<Stat>(file, `${at}.stat`, entry.stat, STATS),
+      name: text(file, `${at}.name`, entry.name),
+      description: text(file, `${at}.description`, entry.description),
+      amount: positiveNumber(file, `${at}.amount`, entry.amount),
+      unit: oneOf<BoostUnit>(file, `${at}.unit`, entry.unit, BOOST_UNITS),
+    };
+  });
+}
+
 /** Validates the bundled data files. Call once at startup. */
 export function loadGameData(): GameData {
   const enemies = parseEnemies(enemiesJson);
@@ -425,5 +621,7 @@ export function loadGameData(): GameData {
     tuning: parseTuning(tuningJson),
     enemies,
     spawns: parseSpawnTimeline(spawnsJson, Object.keys(enemies)),
+    parts: parseParts(partsJson),
+    boosts: parseBoosts(boostsJson),
   };
 }

@@ -53,3 +53,20 @@ export function applyDamage(
     damaged: true,
   };
 }
+
+/** Restores health, never above the maximum. The dead are not revived. */
+export function heal(state: HealthState, amount: number): HealthState {
+  if (isDead(state)) {
+    return state;
+  }
+  return { ...state, current: Math.min(state.max, state.current + Math.max(0, amount)) };
+}
+
+/**
+ * Changes the maximum health. Current health moves by the same amount, so a
+ * larger maximum is felt at once, and never ends above the new maximum.
+ */
+export function withMaxHealth(state: HealthState, max: number): HealthState {
+  const current = Math.min(max, Math.max(0, state.current + (max - state.max)));
+  return { ...state, current, max };
+}
