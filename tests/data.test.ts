@@ -53,9 +53,16 @@ describe('parsePlayerConfig', () => {
 });
 
 const VALID_TUNING = {
+  world: { width: 3840, height: 2160 },
   moveSpeed: 320,
   dash: { distance: 180, durationSeconds: 0.15, cooldownSeconds: 1.5 },
-  fire: { shotsPerSecond: 3, projectileSpeed: 700, projectileDamage: 10 },
+  fire: {
+    shotsPerSecond: 3,
+    projectileSpeed: 700,
+    projectileDamage: 10,
+    projectileSize: 12,
+    projectileHitRadius: 8,
+  },
   player: { maxHealth: 100, postHitInvulnerabilitySeconds: 0.8 },
   spawn: { minDistanceFromPlayer: 350 },
   caps: { maxProjectiles: 100, maxEnemies: 60 },
@@ -118,6 +125,8 @@ describe('parseTuning', () => {
     ['fire', 'shotsPerSecond'],
     ['fire', 'projectileSpeed'],
     ['fire', 'projectileDamage'],
+    ['fire', 'projectileSize'],
+    ['fire', 'projectileHitRadius'],
     ['player', 'maxHealth'],
     ['player', 'postHitInvulnerabilitySeconds'],
     ['spawn', 'minDistanceFromPlayer'],
@@ -160,6 +169,7 @@ describe('parseTuning', () => {
   });
 
   it.each([
+    'world',
     'dash',
     'fire',
     'player',
@@ -173,6 +183,23 @@ describe('parseTuning', () => {
     const withoutSection = { ...VALID_TUNING, [section]: undefined };
     expect(() => parseTuning(withoutSection)).toThrow(
       `src/data/tuning.json: "${section}" must be an object, got undefined`,
+    );
+  });
+
+  it('accepts a world exactly the size of the view', () => {
+    const tuning = parseTuning({ ...VALID_TUNING, world: { width: 1280, height: 720 } });
+    expect(tuning.world).toEqual({ width: 1280, height: 720 });
+  });
+
+  it.each([1279, 0, -3840, '3840', undefined])('rejects the world width %j', (width) => {
+    expect(() => parseTuning({ ...VALID_TUNING, world: { width, height: 2160 } })).toThrow(
+      `src/data/tuning.json: "world.width" must be a number of 1280 or more (the width of the view), got ${JSON.stringify(width)}`,
+    );
+  });
+
+  it.each([719, 0, '2160', undefined])('rejects the world height %j', (height) => {
+    expect(() => parseTuning({ ...VALID_TUNING, world: { width: 3840, height } })).toThrow(
+      `src/data/tuning.json: "world.height" must be a number of 720 or more (the height of the view), got ${JSON.stringify(height)}`,
     );
   });
 
@@ -657,6 +684,19 @@ describe('loadGameData', () => {
     expect(tuning.skipHeal).toBeGreaterThan(0);
     expect(tuning.skipHeal).toBeLessThan(tuning.player.maxHealth / 2);
     expect(tuning.burn.tickIntervalSeconds).toBeGreaterThan(0);
+  });
+
+  it('ships a world clearly larger than the 1280 by 720 view', () => {
+    const { world } = loadGameData().tuning;
+    expect(world.width).toBeGreaterThanOrEqual(1280 * 2);
+    expect(world.height).toBeGreaterThanOrEqual(720 * 2);
+  });
+
+  it('ships shots that hit a little wider than they look, and swarmers the player can outrun', () => {
+    const { tuning, enemies } = loadGameData();
+    expect(tuning.fire.projectileHitRadius).toBeGreaterThanOrEqual(tuning.fire.projectileSize / 2);
+    expect(enemies.swarmer?.speed).toBeLessThan(tuning.moveSpeed);
+    expect(enemies.brute?.speed).toBeLessThan(enemies.swarmer?.speed ?? 0);
   });
 
   it('ships a brute that is slower, tougher and harder-hitting than a swarmer', () => {

@@ -1,5 +1,14 @@
 import Phaser from 'phaser';
 import { aimDirection, DEFAULT_AIM } from '../core/aim';
+import {
+  cameraScroll,
+  isOutside,
+  screenToWorld,
+  VIEW,
+  viewRect,
+  type Rect,
+  type Size,
+} from '../core/camera';
 import { chaseVelocity } from '../core/chase';
 import { playSeconds } from '../core/clock';
 import { crystalTierIndex, crystalVelocity, dropCrystal } from '../core/crystals';
@@ -57,16 +66,22 @@ import { cardView } from '../ui/UpgradeCards';
 import { colourToNumber, ensureShapeTexture } from './shapes';
 import { UPGRADE_SCENE, type UpgradeSceneData } from './UpgradeScene';
 
-export const ARENA_WIDTH = 1280;
-export const ARENA_HEIGHT = 720;
 export const ARENA_BACKGROUND = '#0b0d17';
 
-const ARENA_BORDER_COLOUR = 0x2a3050;
+/** Temporary ground: a grid so movement can be seen, and a marked strip along the world's edge. */
+const GROUND_DEPTH = -1;
+const GRID_SPACING = 160;
+const GRID_COLOUR = 0x161c30;
+const EDGE_STRIP_WIDTH = 48;
+const EDGE_STRIP_COLOUR = 0x1c2238;
+const WORLD_BORDER_WIDTH = 6;
+const WORLD_BORDER_COLOUR = 0x5a6aa0;
 
 const PLAYER_TEXTURE = 'player';
 const PROJECTILE_TEXTURE = 'projectile';
 const PROJECTILE_COLOUR = '#f4f7ff';
-const PROJECTILE_SIZE = 10;
+/** A shot that has flown this far past the edge of the view is removed, in pixels. */
+const PROJECTILE_VIEW_MARGIN = 64;
 const crystalTexture = (tier: number): string => `crystal-${tier}`;
 
 /** Enemy hit circles are a little smaller than the drawn shape, to be forgiving. */
@@ -114,6 +129,7 @@ export class ArenaScene extends Phaser.Scene {
   private readonly gameData: GameData;
   /** The player's stats before any boost. */
   private readonly base: PlayerStats;
+  private readonly world: Size;
   private player!: Sprite;
   private enemies!: Phaser.Physics.Arcade.Group;
   private projectiles!: Phaser.Physics.Arcade.Group;
@@ -136,6 +152,8 @@ export class ArenaScene extends Phaser.Scene {
   private offers!: PendingOffers;
   private rng!: Rng;
   private aim!: Vec2;
+  /** Top-left corner of the view in the world; the camera follows the player within the world. */
+  private scroll: Vec2 = { x: 0, y: 0 };
   private elapsedSeconds = 0;
   private dead = false;
 
@@ -143,6 +161,7 @@ export class ArenaScene extends Phaser.Scene {
     super('Arena');
     this.gameData = data;
     this.base = baseStats(data.tuning);
+    this.world = data.tuning.world;
   }
 
   /** Runs at the start of every run, including after a restart, so it resets all state. */
@@ -180,16 +199,21 @@ export class ArenaScene extends Phaser.Scene {
     this.dashKey = keyboard.addKey(KeyCodes.SPACE);
     this.restartKey = keyboard.addKey(KeyCodes.R);
 
-    this.add
-      .graphics()
-      .lineStyle(2, ARENA_BORDER_COLOUR)
-      .strokeRect(1, 1, ARENA_WIDTH - 2, ARENA_HEIGHT - 2);
+    this.physics.world.setBounds(0, 0, this.world.width, this.world.height);
+    this.cameras.main.setBounds(0, 0, this.world.width, this.world.height);
+    this.drawGround();
 
     ensureShapeTexture(this, PLAYER_TEXTURE, player.shape, player.colour, player.size);
     for (const [name, config] of Object.entries(enemies)) {
       ensureShapeTexture(this, enemyTexture(name), config.shape, config.colour, config.size);
     }
-    ensureShapeTexture(this, PROJECTILE_TEXTURE, 'circle', PROJECTILE_COLOUR, PROJECTILE_SIZE);
+    ensureShapeTexture(
+      this,
+      PROJECTILE_TEXTURE,
+      'circle',
+      PROJECTILE_COLOUR,
+      tuning.fire.projectileSize,
+    );
     tuning.crystals.tiers.forEach((tier, index) => {
       ensureShapeTexture(this, crystalTexture(index), 'square', tier.colour, tier.size);
     });
@@ -198,7 +222,13 @@ export class ArenaScene extends Phaser.Scene {
     this.projectiles = this.physics.add.group();
     this.enemies = this.physics.add.group();
     this.statusFx = this.add.graphics().setDepth(STATUS_DEPTH);
-    this.player = this.physics.add.image(ARENA_WIDTH / 2, ARENA_HEIGHT / 2, PLAYER_TEXTURE);
+    // The run starts in the middle of the world, far from every edge.
+    this.player = this.physics.add.image(
+      this.world.width / 2,
+      this.world.height / 2,
+      PLAYER_TEXTURE,
+    );
+    this.followPlayer();
 
     // Enemies push each other apart instead of stacking into one shape.
     this.physics.add.collider(this.enemies, this.enemies);
@@ -235,15 +265,16 @@ export class ArenaScene extends Phaser.Scene {
     }
     this.elapsedSeconds += deltaSeconds;
 
-    this.updateAim();
     this.movePlayer(deltaSeconds);
+    this.followPlayer();
+    this.updateAim();
     this.health = stepHealth(this.health, deltaSeconds);
     this.blinkWhileInvulnerable();
     this.fireShots(deltaSeconds);
     this.spawnEnemies(deltaSeconds);
     this.updateEnemies(deltaSeconds);
     this.attractCrystals();
-    this.removeProjectilesOutsideArena();
+    this.removeSpentProjectiles();
     this.updateHud();
   }
 
@@ -311,13 +342,55 @@ export class ArenaScene extends Phaser.Scene {
     this.updateHud();
   }
 
+  /** Temporary environment: enough to see the world move and to see its edge coming. */
+  private drawGround(): void {
+    const { width, height } = this.world;
+    const ground = this.add.graphics().setDepth(GROUND_DEPTH);
+
+    ground.lineStyle(1, GRID_COLOUR);
+    for (let x = GRID_SPACING; x < width; x += GRID_SPACING) {
+      ground.lineBetween(x, 0, x, height);
+    }
+    for (let y = GRID_SPACING; y < height; y += GRID_SPACING) {
+      ground.lineBetween(0, y, width, y);
+    }
+
+    ground.fillStyle(EDGE_STRIP_COLOUR);
+    ground.fillRect(0, 0, width, EDGE_STRIP_WIDTH);
+    ground.fillRect(0, height - EDGE_STRIP_WIDTH, width, EDGE_STRIP_WIDTH);
+    ground.fillRect(0, 0, EDGE_STRIP_WIDTH, height);
+    ground.fillRect(width - EDGE_STRIP_WIDTH, 0, EDGE_STRIP_WIDTH, height);
+
+    const half = WORLD_BORDER_WIDTH / 2;
+    ground
+      .lineStyle(WORLD_BORDER_WIDTH, WORLD_BORDER_COLOUR)
+      .strokeRect(half, half, width - WORLD_BORDER_WIDTH, height - WORLD_BORDER_WIDTH);
+  }
+
+  /**
+   * Keeps the player in the middle of the view, except where the view has
+   * reached an edge of the world and stops. The player is confined by the same
+   * world size, so the two always agree.
+   */
+  private followPlayer(): void {
+    this.scroll = cameraScroll(this.player, VIEW, this.world);
+    this.cameras.main.setScroll(this.scroll.x, this.scroll.y);
+  }
+
+  /** The part of the world on screen. */
+  private view(): Rect {
+    return viewRect(this.scroll, VIEW);
+  }
+
   private updateAim(): void {
     const pointer = this.input.activePointer;
     // Until the mouse first moves over the game the pointer has no real position.
     if (pointer.moveTime === 0 && pointer.downTime === 0) {
       return;
     }
-    this.aim = aimDirection(this.player, { x: pointer.worldX, y: pointer.worldY }, this.aim);
+    // The cursor is a point on screen; the camera may have scrolled since it last moved.
+    const cursor = screenToWorld({ x: pointer.x, y: pointer.y }, this.scroll);
+    this.aim = aimDirection(this.player, cursor, this.aim);
   }
 
   private movePlayer(deltaSeconds: number): void {
@@ -345,11 +418,12 @@ export class ArenaScene extends Phaser.Scene {
     const step = dashStep.dashing
       ? dashStep.displacement
       : movementDelta(input, this.stats.moveSpeed, deltaSeconds);
+    // Walking and dashing both end here, so neither can leave the world.
     const next = clampToArena(
       { x: this.player.x + step.x, y: this.player.y + step.y },
       player.size,
-      ARENA_WIDTH,
-      ARENA_HEIGHT,
+      this.world.width,
+      this.world.height,
     );
     this.player.setPosition(next.x, next.y);
   }
@@ -373,7 +447,9 @@ export class ArenaScene extends Phaser.Scene {
         this.player.y,
         PROJECTILE_TEXTURE,
       ) as Sprite;
-      projectile.setCircle(PROJECTILE_SIZE / 2);
+      // The hit circle is centred on the shot and may be larger than it looks.
+      const hitOffset = fire.projectileSize / 2 - fire.projectileHitRadius;
+      projectile.setCircle(fire.projectileHitRadius, hitOffset, hitOffset);
       projectile.setVelocity(this.aim.x * fire.projectileSpeed, this.aim.y * fire.projectileSpeed);
       // The shot keeps the damage and payload it was fired with, whatever is installed later.
       const shot: Shot = {
@@ -406,9 +482,9 @@ export class ArenaScene extends Phaser.Scene {
 
     const positions = spawnGroup({
       count: roomUnderCap(rule.groupSize, this.enemies.countActive(), caps.maxEnemies),
-      arenaWidth: ARENA_WIDTH,
-      arenaHeight: ARENA_HEIGHT,
-      inset: config.size,
+      world: this.world,
+      view: this.view(),
+      margin: config.size,
       spacing: config.size * SPAWN_SPACING_FACTOR,
       player: this.player,
       minDistanceFromPlayer: spawn.minDistanceFromPlayer,
@@ -503,16 +579,13 @@ export class ArenaScene extends Phaser.Scene {
     }
   }
 
-  private removeProjectilesOutsideArena(): void {
-    const margin = PROJECTILE_SIZE;
+  /** Removes shots that have left the world or flown well past the edge of the view. */
+  private removeSpentProjectiles(): void {
+    const world: Rect = { x: 0, y: 0, ...this.world };
+    const view = this.view();
     for (const child of [...this.projectiles.getChildren()]) {
       const projectile = child as Sprite;
-      if (
-        projectile.x < -margin ||
-        projectile.x > ARENA_WIDTH + margin ||
-        projectile.y < -margin ||
-        projectile.y > ARENA_HEIGHT + margin
-      ) {
+      if (isOutside(projectile, world) || isOutside(projectile, view, PROJECTILE_VIEW_MARGIN)) {
         projectile.destroy();
       }
     }
@@ -555,8 +628,8 @@ export class ArenaScene extends Phaser.Scene {
     const pushed = clampToArena(
       { x: enemy.x + push.x, y: enemy.y + push.y },
       state.config.size,
-      ARENA_WIDTH,
-      ARENA_HEIGHT,
+      this.world.width,
+      this.world.height,
     );
     enemy.setPosition(pushed.x, pushed.y);
   }
@@ -591,7 +664,7 @@ export class ArenaScene extends Phaser.Scene {
       // Phaser takes the shake strength as a fraction of the view size.
       this.cameras.main.shake(
         hitFeedback.shakeSeconds * 1000,
-        hitFeedback.shakeIntensity / ARENA_WIDTH,
+        hitFeedback.shakeIntensity / VIEW.width,
       );
     }
     if (isDead(this.health)) {
