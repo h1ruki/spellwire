@@ -13,8 +13,8 @@
     "shotsPerSecond": 3,
     "projectileSpeed": 700,
     "projectileDamage": 10,
-    "projectileSize": 10,
-    "projectileHitRadius": 5
+    "projectileSize": 12,
+    "projectileHitRadius": 8
   },
   "player": {
     "maxHealth": 100,
