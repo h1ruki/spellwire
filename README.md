@@ -2,9 +2,20 @@
 
 A top-down survivor roguelite where you build your weapon from a trigger, a modifier and an elemental payload, then watch how each part changes the way it fires.
 
-**Status:** early development. Milestone M0 (setup) is in review: a dark arena with a player shape that moves with WASD. There is no combat yet.
+**Status:** early development. Milestone M1 (move and shoot) is in review: move, dash, auto-fire at the cursor and fight off chasing swarmers. There are no upgrades or weapon parts yet.
 
-**Play:** <https://h1ruki.github.io/spellwire/> (not yet live; goes live once the M0 deployment succeeds and the product owners verify it)
+**Play:** <https://h1ruki.github.io/spellwire/> (live since 11 October 2026; it shows the latest milestone merged to `main`, so M1 appears there once it is merged)
+
+## Controls
+
+| Input | Action |
+| --- | --- |
+| **W A S D** | Move in 8 directions |
+| **Space** | Dash: a short burst in the direction you are moving, or towards the cursor if you are standing still. 1.5 s cooldown; it does not make you invulnerable |
+| **Mouse** | Aim. The weapon fires on its own towards the cursor; there is no fire button |
+| **R** | Restart after you die |
+
+Swarmers hurt on contact. After a hit you blink and cannot be hurt again for a moment.
 
 - [Product specification](docs/spec.md)
 - [Development plan](docs/plan.md)
@@ -20,7 +31,7 @@ npm ci
 npm run dev
 ```
 
-Open the address the dev server prints (it ends in `/spellwire/`) and move with **W A S D**. Edits to the code or data reload the page automatically.
+Open the address the dev server prints (it ends in `/spellwire/`). Edits to the code or data reload the page automatically.
 
 | Command | What it does |
 | --- | --- |
@@ -38,7 +49,14 @@ Open the address the dev server prints (it ends in `/spellwire/`) and move with 
 Tuning lives in JSON under `src/data/` and is validated on startup; a mistake shows a message naming the file and field.
 
 - `src/data/player.json`: `shape` (`"square"`, `"circle"` or `"triangle"`), `colour` (a hex colour such as `"#39e6ff"`) and `size` (pixels).
-- `src/data/tuning.json`: `moveSpeed` (pixels per second).
+- `src/data/tuning.json`: distances are in pixels, speeds in pixels per second and times in seconds.
+  - `moveSpeed`
+  - `dash`: `distance`, `durationSeconds`, `cooldownSeconds`
+  - `fire`: `shotsPerSecond`, `projectileSpeed`, `projectileDamage`
+  - `player`: `maxHealth`, `postHitInvulnerabilitySeconds`
+  - `spawn`: `intervalSeconds`, `groupSize`, `minDistanceFromPlayer`
+  - `caps`: `maxProjectiles`, `maxEnemies`
+- `src/data/enemies.json`: for the `swarmer`, `speed`, `health`, `contactDamage`, `size`, `colour` and `shape`.
 
 ## How it is built
 
@@ -46,7 +64,8 @@ TypeScript, [Phaser 3](https://phaser.io/) and Vite, deployed to GitHub Pages by
 
 - `src/core/`: gameplay rules as plain TypeScript with no Phaser imports, covered by unit tests in `tests/`.
 - `src/data/`: content and tuning values.
-- `src/game/`: Phaser scenes, input and drawing.
+- `src/game/`: Phaser scenes, input, collisions and drawing.
+- `src/ui/`: the on-screen display (health bar, dash indicator, death prompt).
 
 ## Licence
 
