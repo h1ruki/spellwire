@@ -1,0 +1,2 @@
+# Keep LF line endings on every platform so Prettier's check agrees with CI.
+* text=auto eol=lf
