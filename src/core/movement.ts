@@ -11,6 +11,14 @@ export interface MoveInput {
   right: boolean;
 }
 
+/** Unit vector for the held keys, or zero when none are held or they cancel out. */
+export function moveDirection(input: MoveInput): Vec2 {
+  const dirX = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+  const dirY = (input.down ? 1 : 0) - (input.up ? 1 : 0);
+  const scale = dirX !== 0 && dirY !== 0 ? Math.SQRT1_2 : 1;
+  return { x: dirX * scale, y: dirY * scale };
+}
+
 /**
  * Position change for one frame, in screen coordinates (x grows right, y grows down).
  *
@@ -19,16 +27,9 @@ export interface MoveInput {
  * distance as a straight move.
  */
 export function movementDelta(input: MoveInput, speed: number, deltaSeconds: number): Vec2 {
-  const dirX = (input.right ? 1 : 0) - (input.left ? 1 : 0);
-  const dirY = (input.down ? 1 : 0) - (input.up ? 1 : 0);
-
-  if (dirX === 0 && dirY === 0) {
-    return { x: 0, y: 0 };
-  }
-
+  const direction = moveDirection(input);
   const distance = speed * deltaSeconds;
-  const scale = dirX !== 0 && dirY !== 0 ? distance / Math.SQRT2 : distance;
-  return { x: dirX * scale, y: dirY * scale };
+  return { x: direction.x * distance, y: direction.y * distance };
 }
 
 /**

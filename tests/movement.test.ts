@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clampToArena, movementDelta, type MoveInput } from '../src/core/movement';
+import { clampToArena, moveDirection, movementDelta, type MoveInput } from '../src/core/movement';
 
 const NONE: MoveInput = { up: false, down: false, left: false, right: false };
 const SPEED = 300;
@@ -53,6 +53,24 @@ describe('movementDelta', () => {
 
   it('does not move when no time has passed', () => {
     expect(movementDelta({ ...NONE, right: true }, SPEED, 0)).toEqual({ x: 0, y: 0 });
+  });
+});
+
+describe('moveDirection', () => {
+  it('is zero with no keys held', () => {
+    expect(moveDirection(NONE)).toEqual({ x: 0, y: 0 });
+  });
+
+  it('is a unit vector along an axis for a single key', () => {
+    expect(moveDirection({ ...NONE, up: true })).toEqual({ x: 0, y: -1 });
+    expect(moveDirection({ ...NONE, right: true })).toEqual({ x: 1, y: 0 });
+  });
+
+  it('is a unit vector on a diagonal', () => {
+    const direction = moveDirection({ ...NONE, down: true, left: true });
+    expect(direction.x).toBeCloseTo(-Math.SQRT1_2);
+    expect(direction.y).toBeCloseTo(Math.SQRT1_2);
+    expect(Math.hypot(direction.x, direction.y)).toBeCloseTo(1);
   });
 });
 

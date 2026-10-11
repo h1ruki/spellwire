@@ -15,6 +15,7 @@ function start(): void {
       width: ARENA_WIDTH,
       height: ARENA_HEIGHT,
     },
+    physics: { default: 'arcade' },
     scene: new ArenaScene(data),
   });
 }
