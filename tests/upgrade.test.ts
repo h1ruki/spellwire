@@ -55,14 +55,33 @@ describe('shotDamage', () => {
     expect(shotDamage(createBuild(), base)).toBe(base.damage);
   });
 
-  it('is 15% higher with Fire and lower with Frost', () => {
-    expect(shotDamage(take(createBuild(), part(fire)), base)).toBeCloseTo(base.damage * 1.15);
-    expect(shotDamage(take(createBuild(), part(frost)), base)).toBeLessThan(base.damage);
+  it('is 25% higher with Fire and 10% higher with Frost', () => {
+    expect(shotDamage(take(createBuild(), part(fire)), base)).toBeCloseTo(base.damage * 1.25);
+    expect(shotDamage(take(createBuild(), part(frost)), base)).toBeCloseTo(base.damage * 1.1);
+  });
+
+  it('is never lower with a payload than the plain shot, with or without boosts', () => {
+    for (const boosts of [[], [boostCard('damage')], [boostCard('damage'), boostCard('damage')]]) {
+      const plain = shotDamage(take(createBuild(), ...boosts), base);
+      for (const payload of [fire, frost]) {
+        expect(shotDamage(take(createBuild(), ...boosts, part(payload)), base)).toBeGreaterThan(
+          plain,
+        );
+      }
+    }
   });
 
   it('multiplies the damage boost with the payload multiplier', () => {
     const build = take(createBuild(), part(fire), boostCard('damage'), boostCard('damage'));
-    expect(shotDamage(build, base)).toBeCloseTo(base.damage * 1.2 * 1.15);
+    expect(shotDamage(build, base)).toBeCloseTo(base.damage * 1.2 * 1.25);
+    const withFrost = take(createBuild(), boostCard('damage'), part(frost));
+    expect(shotDamage(withFrost, base)).toBeCloseTo(base.damage * 1.1 * 1.1);
+  });
+
+  it('keeps boosts stacking additively under a payload: two +10% are +20%, not +21%', () => {
+    const build = take(createBuild(), boostCard('damage'), part(fire), boostCard('damage'));
+    expect(shotDamage(build, base)).toBeCloseTo(15);
+    expect(shotDamage(build, base)).not.toBeCloseTo(base.damage * 1.21 * 1.25);
   });
 
   it('leaves the burn alone when damage is boosted', () => {

@@ -199,6 +199,23 @@ function fraction(file: string, field: string, value: unknown): number {
   return value;
 }
 
+function atLeast(
+  file: string,
+  field: string,
+  value: unknown,
+  minimum: number,
+  why: string,
+): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < minimum) {
+    throw new DataError(
+      file,
+      field,
+      `must be a number of ${minimum} or more (${why}), got ${JSON.stringify(value)}`,
+    );
+  }
+  return value;
+}
+
 /** Validates crystal tiers: at least one, starting at 1, strictly ascending. */
 export function parseCrystalTiers(file: string, field: string, raw: unknown): CrystalTier[] {
   if (!Array.isArray(raw) || raw.length === 0) {
@@ -537,7 +554,8 @@ function parseSlow(file: string, field: string, raw: unknown): SlowSpec | null {
 
 /**
  * Validates the weapon parts. Only payloads exist so far, so a part for the
- * trigger or modifier slot is rejected instead of being offered and doing nothing.
+ * trigger or modifier slot is rejected instead of being offered and doing
+ * nothing. A payload never lowers direct damage below the plain shot's.
  */
 export function parseParts(raw: unknown): Part[] {
   const file = PARTS_FILE;
@@ -549,7 +567,13 @@ export function parseParts(raw: unknown): Part[] {
       name: text(file, `${at}.name`, entry.name),
       description: text(file, `${at}.description`, entry.description),
       colour: hexColour(file, `${at}.colour`, entry.colour),
-      damageMultiplier: positiveNumber(file, `${at}.damageMultiplier`, entry.damageMultiplier),
+      damageMultiplier: atLeast(
+        file,
+        `${at}.damageMultiplier`,
+        entry.damageMultiplier,
+        1,
+        'no payload hits softer than the plain shot',
+      ),
       burn: parseBurn(file, `${at}.burn`, entry.burn),
       slow: parseSlow(file, `${at}.slow`, entry.slow),
     };

@@ -50,21 +50,29 @@ describe('shotProfile', () => {
     });
   });
 
-  it('with Fire: +15% direct damage and a 3-second burn, and no slow', () => {
+  it('with Fire: +25% direct damage and a 3-second burn, and no slow', () => {
     const profile = shotProfile(installPart(createLoadout(), fire).loadout);
-    expect(profile.damageMultiplier).toBe(1.15);
+    expect(profile.damageMultiplier).toBe(1.25);
     expect(profile.burn?.durationSeconds).toBe(3);
     expect(profile.burn?.totalDamage).toBeGreaterThan(0);
     expect(profile.slow).toBeNull();
     expect(profile.colour).toBe(fire.colour);
   });
 
-  it('with Frost: lower direct damage and a 40% slow for 2 seconds, and no burn', () => {
+  it('with Frost: +10% direct damage and a 40% slow for 2 seconds, and no burn', () => {
     const profile = shotProfile(installPart(createLoadout(), frost).loadout);
-    expect(profile.damageMultiplier).toBeLessThan(1);
+    expect(profile.damageMultiplier).toBe(1.1);
     expect(profile.slow).toEqual({ percent: 40, durationSeconds: 2 });
     expect(profile.burn).toBeNull();
     expect(profile.colour).toBe(frost.colour);
+  });
+
+  it('never deals less direct damage with a payload than the plain shot', () => {
+    const plain = shotProfile(createLoadout()).damageMultiplier;
+    for (const part of [fire, frost]) {
+      const profile = shotProfile(installPart(createLoadout(), part).loadout);
+      expect(profile.damageMultiplier).toBeGreaterThanOrEqual(plain);
+    }
   });
 
   it('always produces a shot that deals damage, whatever is installed', () => {
