@@ -1,20 +1,39 @@
 import Phaser from 'phaser';
 import { aimDirection, DEFAULT_AIM } from '../core/aim';
 import { chaseVelocity } from '../core/chase';
+import { playSeconds } from '../core/clock';
 import { crystalTierIndex, crystalVelocity, dropCrystal } from '../core/crystals';
 import type { EnemyConfig, GameData } from '../core/data';
-import { createDashState, dashReadiness, stepDash, type DashState } from '../core/dash';
+import {
+  createDashState,
+  dashReadiness,
+  holdDashKey,
+  stepDash,
+  type DashState,
+} from '../core/dash';
 import { createFireState, stepFire, type FireState } from '../core/fire';
 import {
   applyDamage,
   createHealth,
+  heal,
   isDead,
   isInvulnerable,
   stepHealth,
   type HealthState,
 } from '../core/health';
 import { knockbackDisplacement } from '../core/knockback';
+import { shotProfile, SLOTS, type ShotProfile } from '../core/loadout';
 import { clampToArena, moveDirection, movementDelta, type Vec2 } from '../core/movement';
+import {
+  addPendingOffers,
+  createPendingOffers,
+  hasPendingOffers,
+  openNextOffer,
+  resolveOffer,
+  type PendingOffers,
+} from '../core/offers';
+import { previewCard } from '../core/preview';
+import { createRng, type Rng } from '../core/rng';
 import {
   activeSpawnRules,
   createSpawnerState,
@@ -23,9 +42,20 @@ import {
   type SpawnRule,
 } from '../core/schedule';
 import { roomUnderCap, spawnGroup } from '../core/spawn';
+import { baseStats, type PlayerStats } from '../core/stats';
+import {
+  applyHitEffects,
+  createStatus,
+  speedMultiplier,
+  tickStatus,
+  type StatusState,
+} from '../core/status';
+import { buildStats, createBuild, shotDamage, takeCard, type Build } from '../core/upgrade';
 import { addXp, createXpState, xpForNextLevel, type XpState } from '../core/xp';
 import { Hud } from '../ui/Hud';
-import { ensureShapeTexture } from './shapes';
+import { cardView } from '../ui/UpgradeCards';
+import { colourToNumber, ensureShapeTexture } from './shapes';
+import { UPGRADE_SCENE, type UpgradeSceneData } from './UpgradeScene';
 
 export const ARENA_WIDTH = 1280;
 export const ARENA_HEIGHT = 720;
@@ -43,15 +73,16 @@ const crystalTexture = (tier: number): string => `crystal-${tier}`;
 const ENEMY_HIT_RADIUS_FRACTION = 0.4;
 /** Gap between neighbours in a spawned group, as a multiple of enemy size. */
 const SPAWN_SPACING_FACTOR = 1.6;
-/** Longest frame the rules are stepped with, e.g. after the tab was in the background. */
-const MAX_FRAME_SECONDS = 0.1;
 const BLINKS_PER_SECOND = 12;
 const BLINK_ALPHA = 0.25;
 const HIT_FLASH_COLOUR = 0xffffff;
-const LEVEL_NOTICE_SECONDS = 1.5;
+/** Burning and chilled enemies are marked by shapes drawn over them, above the enemies. */
+const STATUS_DEPTH = 1;
+const EMBERS_PER_ENEMY = 3;
+const EMBER_RADIUS = 3;
 
 const ENEMY_DATA_KEY = 'enemy';
-const DIRECTION_DATA_KEY = 'direction';
+const SHOT_DATA_KEY = 'shot';
 const VALUE_DATA_KEY = 'value';
 
 type Sprite = Phaser.Physics.Arcade.Image;
@@ -63,16 +94,31 @@ interface EnemyState {
   health: HealthState;
   /** Seconds of hit flash left; 0 when not flashing. */
   flashSeconds: number;
+  status: StatusState;
+  /** Colours of the payloads that last set this enemy burning or slowed it. */
+  burnColour: number;
+  slowColour: number;
+}
+
+/** What a projectile carries from the moment it is fired. */
+interface Shot {
+  direction: Vec2;
+  /** Direct damage on hit. */
+  damage: number;
+  profile: ShotProfile;
 }
 
 const enemyTexture = (name: string): string => `enemy-${name}`;
 
 export class ArenaScene extends Phaser.Scene {
   private readonly gameData: GameData;
+  /** The player's stats before any boost. */
+  private readonly base: PlayerStats;
   private player!: Sprite;
   private enemies!: Phaser.Physics.Arcade.Group;
   private projectiles!: Phaser.Physics.Arcade.Group;
   private crystals!: Phaser.Physics.Arcade.Group;
+  private statusFx!: Phaser.GameObjects.Graphics;
   private hud!: Hud;
   private keys!: MoveKeys;
   private dashKey!: Phaser.Input.Keyboard.Key;
@@ -83,28 +129,40 @@ export class ArenaScene extends Phaser.Scene {
   private fire!: FireState;
   private spawner!: SpawnerState;
   private xp!: XpState;
+  private build!: Build;
+  /** The player's current numbers and shot, kept in step with the build. */
+  private stats!: PlayerStats;
+  private shot!: ShotProfile;
+  private offers!: PendingOffers;
+  private rng!: Rng;
   private aim!: Vec2;
   private elapsedSeconds = 0;
-  private levelNoticeSeconds = 0;
   private dead = false;
 
   constructor(data: GameData) {
     super('Arena');
     this.gameData = data;
+    this.base = baseStats(data.tuning);
   }
 
   /** Runs at the start of every run, including after a restart, so it resets all state. */
   create(): void {
     const { player, tuning, enemies } = this.gameData;
 
-    this.health = createHealth(tuning.player.maxHealth);
+    this.setBuild(createBuild());
+    this.health = createHealth(this.stats.maxHealth);
+    this.offers = createPendingOffers();
+    this.rng = createRng(Math.floor(Math.random() * 2 ** 32));
+    // A restart cannot happen while an offer is open, but make sure none outlives a run.
+    if (this.scene.isActive(UPGRADE_SCENE)) {
+      this.scene.stop(UPGRADE_SCENE);
+    }
     this.dash = createDashState();
     this.fire = createFireState();
     this.spawner = createSpawnerState();
     this.xp = createXpState();
     this.aim = DEFAULT_AIM;
     this.elapsedSeconds = 0;
-    this.levelNoticeSeconds = 0;
     this.dead = false;
 
     const keyboard = this.input.keyboard;
@@ -139,6 +197,7 @@ export class ArenaScene extends Phaser.Scene {
     this.crystals = this.physics.add.group();
     this.projectiles = this.physics.add.group();
     this.enemies = this.physics.add.group();
+    this.statusFx = this.add.graphics().setDepth(STATUS_DEPTH);
     this.player = this.physics.add.image(ARENA_WIDTH / 2, ARENA_HEIGHT / 2, PLAYER_TEXTURE);
 
     // Enemies push each other apart instead of stacking into one shape.
@@ -165,9 +224,16 @@ export class ArenaScene extends Phaser.Scene {
       return;
     }
 
-    const deltaSeconds = Math.min(deltaMs / 1000, MAX_FRAME_SECONDS);
+    this.openPendingOffer();
+    // Play time comes only from here, so nothing advances or builds up during an offer.
+    const paused = hasPendingOffers(this.offers);
+    const deltaSeconds = playSeconds(deltaMs, paused);
+    if (paused) {
+      // A dash key held through the offer is not a fresh press when play resumes.
+      this.dash = holdDashKey(this.dash, this.dashKey.isDown);
+      return;
+    }
     this.elapsedSeconds += deltaSeconds;
-    this.levelNoticeSeconds = Math.max(0, this.levelNoticeSeconds - deltaSeconds);
 
     this.updateAim();
     this.movePlayer(deltaSeconds);
@@ -178,6 +244,70 @@ export class ArenaScene extends Phaser.Scene {
     this.updateEnemies(deltaSeconds);
     this.attractCrystals();
     this.removeProjectilesOutsideArena();
+    this.updateHud();
+  }
+
+  private setBuild(build: Build): void {
+    this.build = build;
+    this.stats = buildStats(build, this.base);
+    this.shot = shotProfile(build.loadout);
+  }
+
+  /**
+   * Opens the offer for the next unresolved level-up and pauses play. The offer
+   * is built here, when it opens, so it reflects the choice made in the last one.
+   */
+  private openPendingOffer(): void {
+    if (!hasPendingOffers(this.offers) || this.offers.active) {
+      return;
+    }
+    const { parts, boosts, tuning } = this.gameData;
+    this.offers = openNextOffer(this.offers, { parts, boosts }, this.build.loadout, this.rng);
+    const offer = this.offers.active;
+    if (!offer) {
+      return;
+    }
+
+    this.physics.pause();
+    const data: UpgradeSceneData = {
+      view: {
+        level: this.xp.level - this.offers.pending + 1,
+        cards: offer.cards.map((card) => cardView(card, previewCard(card, this.build, this.base))),
+        skipHeal: tuning.skipHeal,
+        waiting: this.offers.pending - 1,
+      },
+      onChoose: (index) => this.chooseCard(index),
+      onSkip: () => this.skipOffer(),
+    };
+    this.scene.launch(UPGRADE_SCENE, data);
+  }
+
+  private chooseCard(index: number): void {
+    const card = this.offers.active?.cards[index];
+    if (!card) {
+      return;
+    }
+    const taken = takeCard(this.build, this.health, card, this.base);
+    this.health = taken.health;
+    this.setBuild(taken.build);
+    this.closeOffer();
+  }
+
+  private skipOffer(): void {
+    if (!this.offers.active) {
+      return;
+    }
+    this.health = heal(this.health, this.gameData.tuning.skipHeal);
+    this.closeOffer();
+  }
+
+  /** Play resumes only when no level-up is left to choose; otherwise the next offer opens. */
+  private closeOffer(): void {
+    this.offers = resolveOffer(this.offers);
+    this.scene.stop(UPGRADE_SCENE);
+    if (!hasPendingOffers(this.offers)) {
+      this.physics.resume();
+    }
     this.updateHud();
   }
 
@@ -214,7 +344,7 @@ export class ArenaScene extends Phaser.Scene {
     // The burst replaces normal movement, so the locked direction cannot be steered.
     const step = dashStep.dashing
       ? dashStep.displacement
-      : movementDelta(input, tuning.moveSpeed, deltaSeconds);
+      : movementDelta(input, this.stats.moveSpeed, deltaSeconds);
     const next = clampToArena(
       { x: this.player.x + step.x, y: this.player.y + step.y },
       player.size,
@@ -233,7 +363,7 @@ export class ArenaScene extends Phaser.Scene {
 
   private fireShots(deltaSeconds: number): void {
     const { fire, caps } = this.gameData.tuning;
-    const fireStep = stepFire(this.fire, fire.shotsPerSecond, deltaSeconds);
+    const fireStep = stepFire(this.fire, this.stats.fireRate, deltaSeconds);
     this.fire = fireStep.state;
 
     const shots = roomUnderCap(fireStep.shots, this.projectiles.countActive(), caps.maxProjectiles);
@@ -245,7 +375,16 @@ export class ArenaScene extends Phaser.Scene {
       ) as Sprite;
       projectile.setCircle(PROJECTILE_SIZE / 2);
       projectile.setVelocity(this.aim.x * fire.projectileSpeed, this.aim.y * fire.projectileSpeed);
-      projectile.setData(DIRECTION_DATA_KEY, this.aim);
+      // The shot keeps the damage and payload it was fired with, whatever is installed later.
+      const shot: Shot = {
+        direction: this.aim,
+        damage: shotDamage(this.build, this.base),
+        profile: this.shot,
+      };
+      projectile.setData(SHOT_DATA_KEY, shot);
+      if (shot.profile.colour) {
+        projectile.setTint(colourToNumber(shot.profile.colour));
+      }
     }
   }
 
@@ -280,17 +419,37 @@ export class ArenaScene extends Phaser.Scene {
     for (const position of positions) {
       const enemy = this.enemies.create(position.x, position.y, enemyTexture(rule.enemy)) as Sprite;
       enemy.setCircle(hitRadius, hitOffset, hitOffset);
-      const state: EnemyState = { config, health: createHealth(config.health), flashSeconds: 0 };
+      const state: EnemyState = {
+        config,
+        health: createHealth(config.health),
+        flashSeconds: 0,
+        status: createStatus(),
+        burnColour: HIT_FLASH_COLOUR,
+        slowColour: HIT_FLASH_COLOUR,
+      };
       enemy.setData(ENEMY_DATA_KEY, state);
     }
   }
 
   private updateEnemies(deltaSeconds: number): void {
-    for (const child of this.enemies.getChildren()) {
+    const { tickIntervalSeconds } = this.gameData.tuning.burn;
+    this.statusFx.clear();
+    // A burn can kill, which removes the enemy from the group while it is being walked.
+    for (const child of [...this.enemies.getChildren()]) {
       const enemy = child as Sprite;
       const state = enemy.getData(ENEMY_DATA_KEY) as EnemyState;
 
-      const velocity = chaseVelocity(enemy, this.player, state.config.speed);
+      const tick = tickStatus(state.status, state.health, tickIntervalSeconds, deltaSeconds);
+      state.status = tick.status;
+      state.health = tick.health;
+      if (tick.killed) {
+        this.killEnemy(enemy);
+        continue;
+      }
+      this.drawStatus(enemy, state);
+
+      const speed = state.config.speed * speedMultiplier(state.status);
+      const velocity = chaseVelocity(enemy, this.player, speed);
       enemy.setVelocity(velocity.x, velocity.y);
       if (velocity.x !== 0 || velocity.y !== 0) {
         // Shapes are drawn pointing up, so turn the tip towards the player.
@@ -306,8 +465,37 @@ export class ArenaScene extends Phaser.Scene {
     }
   }
 
+  /** Marks a chilled enemy with a steady wash and ring, and a burning one with flickering embers. */
+  private drawStatus(enemy: Sprite, state: EnemyState): void {
+    const { burn, slow } = state.status;
+    const radius = state.config.size / 2;
+    if (slow) {
+      this.statusFx.fillStyle(state.slowColour, 0.4).fillCircle(enemy.x, enemy.y, radius * 0.9);
+      this.statusFx
+        .lineStyle(2, state.slowColour, 0.95)
+        .strokeCircle(enemy.x, enemy.y, radius * 1.15);
+    }
+    if (burn) {
+      // Driven by run time, so the flames freeze with everything else during an offer.
+      const flicker = 0.5 + 0.5 * Math.sin(this.elapsedSeconds * 20 + enemy.x * 0.05);
+      this.statusFx
+        .fillStyle(state.burnColour, 0.25 + 0.25 * flicker)
+        .fillCircle(enemy.x, enemy.y, radius * 0.9);
+      this.statusFx.fillStyle(state.burnColour, 0.95);
+      for (let ember = 0; ember < EMBERS_PER_ENEMY; ember++) {
+        const angle = this.elapsedSeconds * 5 + (ember * 2 * Math.PI) / EMBERS_PER_ENEMY;
+        this.statusFx.fillCircle(
+          enemy.x + Math.cos(angle) * radius * 1.1,
+          enemy.y + Math.sin(angle) * radius * 1.1,
+          EMBER_RADIUS,
+        );
+      }
+    }
+  }
+
   private attractCrystals(): void {
-    const { pickupRange, crystals } = this.gameData.tuning;
+    const { crystals } = this.gameData.tuning;
+    const { pickupRange } = this.stats;
     for (const child of this.crystals.getChildren()) {
       const crystal = child as Sprite;
       const velocity = crystalVelocity(crystal, this.player, pickupRange, crystals.attractSpeed);
@@ -335,17 +523,24 @@ export class ArenaScene extends Phaser.Scene {
     if (!projectile.active || !enemy.active) {
       return;
     }
-    const hitDirection = projectile.getData(DIRECTION_DATA_KEY) as Vec2;
+    const shot = projectile.getData(SHOT_DATA_KEY) as Shot;
+    const hitDirection = shot.direction;
     projectile.destroy();
 
-    const { fire, hitFeedback } = this.gameData.tuning;
+    const { hitFeedback } = this.gameData.tuning;
     const state = enemy.getData(ENEMY_DATA_KEY) as EnemyState;
-    state.health = applyDamage(state.health, fire.projectileDamage).state;
+    state.health = applyDamage(state.health, shot.damage).state;
 
     if (isDead(state.health)) {
-      this.dropXp(enemy.x, enemy.y, state.config.xp);
-      enemy.destroy();
+      this.killEnemy(enemy);
       return;
+    }
+
+    state.status = applyHitEffects(state.status, shot.profile);
+    if (shot.profile.colour) {
+      const colour = colourToNumber(shot.profile.colour);
+      state.burnColour = shot.profile.burn ? colour : state.burnColour;
+      state.slowColour = shot.profile.slow ? colour : state.slowColour;
     }
 
     if (hitFeedback.flashSeconds > 0) {
@@ -364,6 +559,19 @@ export class ArenaScene extends Phaser.Scene {
       ARENA_HEIGHT,
     );
     enemy.setPosition(pushed.x, pushed.y);
+  }
+
+  /**
+   * The one way an enemy dies, whether a shot or a burn killed it: it drops its
+   * XP and is removed. An enemy already removed is ignored, so it happens once.
+   */
+  private killEnemy(enemy: Sprite): void {
+    if (!enemy.active) {
+      return;
+    }
+    const state = enemy.getData(ENEMY_DATA_KEY) as EnemyState;
+    this.dropXp(enemy.x, enemy.y, state.config.xp);
+    enemy.destroy();
   }
 
   private hitPlayer(enemy: Sprite): void {
@@ -425,12 +633,8 @@ export class ArenaScene extends Phaser.Scene {
 
     const gain = addXp(this.xp, value, this.gameData.tuning.xp);
     this.xp = gain.state;
-    if (gain.levelsGained > 0) {
-      // TEMPORARY (M2): a level-up only shows a notice. Play does not pause and
-      // nothing is awarded. M3 replaces this with the approved interaction:
-      // pause and offer upgrade cards.
-      this.levelNoticeSeconds = LEVEL_NOTICE_SECONDS;
-    }
+    // Each level gained owes one upgrade offer; the next frame opens the first.
+    this.offers = addPendingOffers(this.offers, gain.levelsGained);
   }
 
   private die(): void {
@@ -450,10 +654,15 @@ export class ArenaScene extends Phaser.Scene {
       xp: this.xp.xp,
       xpForNextLevel: xpForNextLevel(this.xp.level, this.gameData.tuning.xp),
       elapsedSeconds: this.elapsedSeconds,
-      levelNotice:
-        this.levelNoticeSeconds > 0
-          ? { level: this.xp.level, opacity: this.levelNoticeSeconds / LEVEL_NOTICE_SECONDS }
-          : null,
+      baseMaxHealth: this.base.maxHealth,
+      slots: SLOTS.map((slot) => {
+        const part = this.build.loadout[slot];
+        return {
+          label: slot.charAt(0).toUpperCase() + slot.slice(1),
+          part: part?.name ?? null,
+          colour: part?.colour ?? null,
+        };
+      }),
     });
   }
 }

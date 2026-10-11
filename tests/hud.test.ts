@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatRunTime } from '../src/ui/Hud';
+import { formatRunTime, healthBarWidth } from '../src/ui/Hud';
 
 describe('formatRunTime', () => {
   it.each([
@@ -13,5 +13,18 @@ describe('formatRunTime', () => {
     [600, '10:00'],
   ])('shows %d s as %s', (seconds, expected) => {
     expect(formatRunTime(seconds)).toBe(expected);
+  });
+});
+
+describe('healthBarWidth', () => {
+  it('grows with maximum health', () => {
+    const start = healthBarWidth(100, 100);
+    expect(healthBarWidth(120, 100)).toBeCloseTo(start * 1.2);
+    expect(healthBarWidth(140, 100)).toBeGreaterThan(healthBarWidth(120, 100));
+  });
+
+  it('stops growing at a limit so it stays clear of the XP bar', () => {
+    expect(healthBarWidth(1000, 100)).toBe(healthBarWidth(2000, 100));
+    expect(healthBarWidth(1000, 100)).toBeLessThan(400);
   });
 });

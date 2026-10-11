@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { loadGameData } from './core/data';
 import { ARENA_BACKGROUND, ARENA_HEIGHT, ARENA_WIDTH, ArenaScene } from './game/ArenaScene';
+import { UpgradeScene } from './game/UpgradeScene';
 
 function start(): void {
   const data = loadGameData();
@@ -16,7 +17,8 @@ function start(): void {
       height: ARENA_HEIGHT,
     },
     physics: { default: 'arcade' },
-    scene: new ArenaScene(data),
+    // Only the first scene starts on its own; the arena launches the upgrade offer.
+    scene: [new ArenaScene(data), new UpgradeScene()],
   });
 }
 
