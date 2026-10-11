@@ -1,16 +1,22 @@
+import boostsJson from '../data/boosts.json';
 import enemiesJson from '../data/enemies.json';
+import partsJson from '../data/parts.json';
 import playerJson from '../data/player.json';
 import spawnsJson from '../data/spawns.json';
 import tuningJson from '../data/tuning.json';
 import type { CrystalTier } from './crystals';
 import type { DashTuning } from './dash';
+import type { BurnSpec, Part, SlowSpec } from './loadout';
 import type { SpawnPhase, SpawnRule } from './schedule';
+import { BOOST_UNITS, STATS, type Boost, type BoostUnit, type Stat } from './stats';
 import type { XpTuning } from './xp';
 
 export const PLAYER_FILE = 'src/data/player.json';
 export const TUNING_FILE = 'src/data/tuning.json';
 export const ENEMIES_FILE = 'src/data/enemies.json';
 export const SPAWNS_FILE = 'src/data/spawns.json';
+export const PARTS_FILE = 'src/data/parts.json';
+export const BOOSTS_FILE = 'src/data/boosts.json';
 
 export const SHAPES = ['square', 'circle', 'triangle', 'hexagon'] as const;
 export type Shape = (typeof SHAPES)[number];
@@ -68,6 +74,11 @@ export interface HitFeedbackTuning {
   shakeSeconds: number;
 }
 
+export interface BurnTuning {
+  /** How often a burning enemy takes its burn damage. */
+  tickIntervalSeconds: number;
+}
+
 export interface Tuning {
   /** Player movement speed in pixels per second. */
   moveSpeed: number;
@@ -81,6 +92,9 @@ export interface Tuning {
   pickupRange: number;
   crystals: CrystalTuning;
   hitFeedback: HitFeedbackTuning;
+  /** Health restored by skipping an upgrade offer, never above the maximum. */
+  skipHeal: number;
+  burn: BurnTuning;
 }
 
 export interface EnemyConfig {
@@ -109,6 +123,10 @@ export interface GameData {
   enemies: Enemies;
   /** Spawn timeline, sorted by start time. */
   spawns: SpawnPhase[];
+  /** Weapon parts that can be offered, in file order. */
+  parts: Part[];
+  /** Stat boosts that can be offered, in file order. */
+  boosts: Boost[];
 }
 
 /** Thrown when a data file fails validation; the message names the file and field. */
@@ -258,6 +276,7 @@ export function parseTuning(raw: unknown): Tuning {
   const xp = section(file, record, 'xp');
   const crystals = section(file, record, 'crystals');
   const hitFeedback = section(file, record, 'hitFeedback');
+  const burn = section(file, record, 'burn');
 
   return {
     moveSpeed,
@@ -313,6 +332,14 @@ export function parseTuning(raw: unknown): Tuning {
         hitFeedback.shakeIntensity,
       ),
       shakeSeconds: nonNegativeNumber(file, 'hitFeedback.shakeSeconds', hitFeedback.shakeSeconds),
+    },
+    skipHeal: positiveNumber(file, 'skipHeal', record.skipHeal),
+    burn: {
+      tickIntervalSeconds: positiveNumber(
+        file,
+        'burn.tickIntervalSeconds',
+        burn.tickIntervalSeconds,
+      ),
     },
   };
 }
@@ -417,6 +444,133 @@ export function parseSpawnTimeline(raw: unknown, enemyNames: readonly string[]):
   return timeline;
 }
 
+function text(file: string, field: string, value: unknown): string {
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new DataError(
+      file,
+      field,
+      `must be text that is not empty, got ${JSON.stringify(value)}`,
+    );
+  }
+  return value;
+}
+
+function oneOf<T extends string>(
+  file: string,
+  field: string,
+  value: unknown,
+  allowed: readonly T[],
+): T {
+  if (typeof value !== 'string' || !allowed.includes(value as T)) {
+    const list = allowed.map((option) => `"${option}"`).join(', ');
+    throw new DataError(file, field, `must be one of ${list}, got ${JSON.stringify(value)}`);
+  }
+  return value as T;
+}
+
+/** A list of objects that each carry their own "id", e.g. the parts file. */
+function entries(file: string, raw: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(raw) || raw.length === 0) {
+    throw new Error(`${file}: expected a list with at least one entry, got ${JSON.stringify(raw)}`);
+  }
+  const seen: string[] = [];
+  return raw.map((entry: unknown, index) => {
+    if (!isRecord(entry)) {
+      throw new DataError(file, `[${index}]`, `must be an object, got ${JSON.stringify(entry)}`);
+    }
+    const id = text(file, `[${index}].id`, entry.id);
+    if (seen.includes(id)) {
+      throw new DataError(
+        file,
+        `[${index}].id`,
+        `must not repeat an earlier id, got "${id}" twice`,
+      );
+    }
+    seen.push(id);
+    return entry;
+  });
+}
+
+/** An effect a part may leave out, such as "burn" on a part that does not burn. */
+function optionalSection(
+  file: string,
+  field: string,
+  value: unknown,
+): Record<string, unknown> | null {
+  if (value === undefined) {
+    return null;
+  }
+  if (!isRecord(value)) {
+    throw new DataError(file, field, `must be an object or left out, got ${JSON.stringify(value)}`);
+  }
+  return value;
+}
+
+function parseBurn(file: string, field: string, raw: unknown): BurnSpec | null {
+  const burn = optionalSection(file, field, raw);
+  return (
+    burn && {
+      durationSeconds: positiveNumber(file, `${field}.durationSeconds`, burn.durationSeconds),
+      totalDamage: positiveNumber(file, `${field}.totalDamage`, burn.totalDamage),
+    }
+  );
+}
+
+function parseSlow(file: string, field: string, raw: unknown): SlowSpec | null {
+  const slow = optionalSection(file, field, raw);
+  if (!slow) {
+    return null;
+  }
+  const percent = slow.percent;
+  if (typeof percent !== 'number' || !Number.isFinite(percent) || percent <= 0 || percent > 100) {
+    throw new DataError(
+      file,
+      `${field}.percent`,
+      `must be a number above 0 and at most 100, got ${JSON.stringify(percent)}`,
+    );
+  }
+  return {
+    percent,
+    durationSeconds: positiveNumber(file, `${field}.durationSeconds`, slow.durationSeconds),
+  };
+}
+
+/**
+ * Validates the weapon parts. Only payloads exist so far, so a part for the
+ * trigger or modifier slot is rejected instead of being offered and doing nothing.
+ */
+export function parseParts(raw: unknown): Part[] {
+  const file = PARTS_FILE;
+  return entries(file, raw).map((entry, index) => {
+    const at = `[${index}]`;
+    return {
+      id: text(file, `${at}.id`, entry.id),
+      slot: oneOf(file, `${at}.slot`, entry.slot, ['payload'] as const),
+      name: text(file, `${at}.name`, entry.name),
+      description: text(file, `${at}.description`, entry.description),
+      colour: hexColour(file, `${at}.colour`, entry.colour),
+      damageMultiplier: positiveNumber(file, `${at}.damageMultiplier`, entry.damageMultiplier),
+      burn: parseBurn(file, `${at}.burn`, entry.burn),
+      slow: parseSlow(file, `${at}.slow`, entry.slow),
+    };
+  });
+}
+
+export function parseBoosts(raw: unknown): Boost[] {
+  const file = BOOSTS_FILE;
+  return entries(file, raw).map((entry, index) => {
+    const at = `[${index}]`;
+    return {
+      id: text(file, `${at}.id`, entry.id),
+      stat: oneOf<Stat>(file, `${at}.stat`, entry.stat, STATS),
+      name: text(file, `${at}.name`, entry.name),
+      description: text(file, `${at}.description`, entry.description),
+      amount: positiveNumber(file, `${at}.amount`, entry.amount),
+      unit: oneOf<BoostUnit>(file, `${at}.unit`, entry.unit, BOOST_UNITS),
+    };
+  });
+}
+
 /** Validates the bundled data files. Call once at startup. */
 export function loadGameData(): GameData {
   const enemies = parseEnemies(enemiesJson);
@@ -425,5 +579,7 @@ export function loadGameData(): GameData {
     tuning: parseTuning(tuningJson),
     enemies,
     spawns: parseSpawnTimeline(spawnsJson, Object.keys(enemies)),
+    parts: parseParts(partsJson),
+    boosts: parseBoosts(boostsJson),
   };
 }

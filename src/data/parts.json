@@ -1,0 +1,20 @@
+[
+  {
+    "id": "fire",
+    "slot": "payload",
+    "name": "Fire",
+    "description": "Shots hit harder and set enemies burning.",
+    "colour": "#ff8a3d",
+    "damageMultiplier": 1.15,
+    "burn": { "durationSeconds": 3, "totalDamage": 12 }
+  },
+  {
+    "id": "frost",
+    "slot": "payload",
+    "name": "Frost",
+    "description": "Shots hit softer but slow enemies down.",
+    "colour": "#8fd8ff",
+    "damageMultiplier": 0.85,
+    "slow": { "percent": 40, "durationSeconds": 2 }
+  }
+]

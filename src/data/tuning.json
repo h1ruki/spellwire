@@ -39,5 +39,9 @@
     "knockbackStrength": 24,
     "shakeIntensity": 5,
     "shakeSeconds": 0.15
+  },
+  "skipHeal": 10,
+  "burn": {
+    "tickIntervalSeconds": 0.5
   }
 }

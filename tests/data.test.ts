@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   loadGameData,
+  parseBoosts,
   parseEnemies,
+  parseParts,
   parsePlayerConfig,
   parseCrystalTiers,
   parseSpawnTimeline,
@@ -68,10 +70,12 @@ const VALID_TUNING = {
     ],
   },
   hitFeedback: { flashSeconds: 0.08, knockbackStrength: 24, shakeIntensity: 5, shakeSeconds: 0.15 },
+  skipHeal: 10,
+  burn: { tickIntervalSeconds: 0.5 },
 };
 
 type TuningSection =
-  'dash' | 'fire' | 'player' | 'spawn' | 'caps' | 'xp' | 'crystals' | 'hitFeedback';
+  'dash' | 'fire' | 'player' | 'spawn' | 'caps' | 'xp' | 'crystals' | 'hitFeedback' | 'burn';
 
 /** A copy of the valid tuning with one nested field replaced. */
 function tuningWith(section: TuningSection, field: string, value: unknown) {
@@ -95,6 +99,12 @@ describe('parseTuning', () => {
     );
   });
 
+  it.each([0, -10, '10', null, undefined])('rejects the skip heal %j', (skipHeal) => {
+    expect(() => parseTuning({ ...VALID_TUNING, skipHeal })).toThrow(
+      `src/data/tuning.json: "skipHeal" must be a number greater than 0, got ${JSON.stringify(skipHeal)}`,
+    );
+  });
+
   it.each([0, -120, '120', undefined])('rejects the pickup range %j', (pickupRange) => {
     expect(() => parseTuning({ ...VALID_TUNING, pickupRange })).toThrow(
       `src/data/tuning.json: "pickupRange" must be a number greater than 0, got ${JSON.stringify(pickupRange)}`,
@@ -113,6 +123,7 @@ describe('parseTuning', () => {
     ['spawn', 'minDistanceFromPlayer'],
     ['xp', 'firstLevelXp'],
     ['crystals', 'attractSpeed'],
+    ['burn', 'tickIntervalSeconds'],
   ] as const)('rejects a bad number for %s.%s', (section, field) => {
     for (const bad of [0, -1, '3', null, undefined]) {
       expect(() => parseTuning(tuningWith(section, field, bad))).toThrow(
@@ -148,15 +159,22 @@ describe('parseTuning', () => {
     }
   });
 
-  it.each(['dash', 'fire', 'player', 'spawn', 'caps', 'xp', 'crystals', 'hitFeedback'] as const)(
-    'rejects a missing "%s" section',
-    (section) => {
-      const withoutSection = { ...VALID_TUNING, [section]: undefined };
-      expect(() => parseTuning(withoutSection)).toThrow(
-        `src/data/tuning.json: "${section}" must be an object, got undefined`,
-      );
-    },
-  );
+  it.each([
+    'dash',
+    'fire',
+    'player',
+    'spawn',
+    'caps',
+    'xp',
+    'crystals',
+    'hitFeedback',
+    'burn',
+  ] as const)('rejects a missing "%s" section', (section) => {
+    const withoutSection = { ...VALID_TUNING, [section]: undefined };
+    expect(() => parseTuning(withoutSection)).toThrow(
+      `src/data/tuning.json: "${section}" must be an object, got undefined`,
+    );
+  });
 
   it('rejects a section that is not an object', () => {
     expect(() => parseTuning({ ...VALID_TUNING, dash: 5 })).toThrow(
@@ -405,6 +423,192 @@ describe('parseSpawnTimeline', () => {
   });
 });
 
+const VALID_FIRE = {
+  id: 'fire',
+  slot: 'payload',
+  name: 'Fire',
+  description: 'Shots hit harder and set enemies burning.',
+  colour: '#ff8a3d',
+  damageMultiplier: 1.15,
+  burn: { durationSeconds: 3, totalDamage: 12 },
+};
+const VALID_FROST = {
+  id: 'frost',
+  slot: 'payload',
+  name: 'Frost',
+  description: 'Shots hit softer but slow enemies down.',
+  colour: '#8fd8ff',
+  damageMultiplier: 0.85,
+  slow: { percent: 40, durationSeconds: 2 },
+};
+
+describe('parseParts', () => {
+  it('accepts valid data, filling in the effect a part leaves out', () => {
+    expect(parseParts([VALID_FIRE, VALID_FROST])).toEqual([
+      { ...VALID_FIRE, slow: null },
+      { ...VALID_FROST, burn: null },
+    ]);
+  });
+
+  it('accepts a part with neither a burn nor a slow', () => {
+    const plain = { ...VALID_FIRE, burn: undefined };
+    expect(parseParts([plain])[0]).toMatchObject({ burn: null, slow: null });
+  });
+
+  it.each(['id', 'name', 'description'])('rejects a missing or empty %s', (field) => {
+    for (const bad of ['', '  ', 5, undefined]) {
+      expect(() => parseParts([VALID_FIRE, { ...VALID_FROST, [field]: bad }])).toThrow(
+        `src/data/parts.json: "[1].${field}" must be text that is not empty, got ${JSON.stringify(bad)}`,
+      );
+    }
+  });
+
+  it('rejects two parts with the same id', () => {
+    expect(() => parseParts([VALID_FIRE, { ...VALID_FROST, id: 'fire' }])).toThrow(
+      'src/data/parts.json: "[1].id" must not repeat an earlier id, got "fire" twice',
+    );
+  });
+
+  it.each(['trigger', 'modifier', 'Payload', undefined])('rejects the slot %j', (slot) => {
+    expect(() => parseParts([{ ...VALID_FIRE, slot }])).toThrow(
+      `src/data/parts.json: "[0].slot" must be one of "payload", got ${JSON.stringify(slot)}`,
+    );
+  });
+
+  it('rejects a bad colour', () => {
+    expect(() => parseParts([{ ...VALID_FIRE, colour: 'orange' }])).toThrow(
+      'src/data/parts.json: "[0].colour" must be a hex colour like "#39e6ff", got "orange"',
+    );
+  });
+
+  it.each([0, -1, '1.15', undefined])('rejects the damage multiplier %j', (damageMultiplier) => {
+    expect(() => parseParts([{ ...VALID_FIRE, damageMultiplier }])).toThrow(
+      `src/data/parts.json: "[0].damageMultiplier" must be a number greater than 0, got ${JSON.stringify(damageMultiplier)}`,
+    );
+  });
+
+  it.each(['durationSeconds', 'totalDamage'])('rejects a bad burn %s', (field) => {
+    for (const bad of [0, -3, '3', undefined]) {
+      const burn = { ...VALID_FIRE.burn, [field]: bad };
+      expect(() => parseParts([{ ...VALID_FIRE, burn }])).toThrow(
+        `src/data/parts.json: "[0].burn.${field}" must be a number greater than 0, got ${JSON.stringify(bad)}`,
+      );
+    }
+  });
+
+  it.each([0, -40, 101, '40', undefined])('rejects the slow percent %j', (percent) => {
+    const slow = { ...VALID_FROST.slow, percent };
+    expect(() => parseParts([VALID_FIRE, { ...VALID_FROST, slow }])).toThrow(
+      `src/data/parts.json: "[1].slow.percent" must be a number above 0 and at most 100, got ${JSON.stringify(percent)}`,
+    );
+  });
+
+  it('accepts a slow of exactly 100 percent', () => {
+    const slow = { ...VALID_FROST.slow, percent: 100 };
+    expect(parseParts([{ ...VALID_FROST, slow }])[0]?.slow?.percent).toBe(100);
+  });
+
+  it.each([0, -2, undefined])('rejects the slow duration %j', (durationSeconds) => {
+    const slow = { ...VALID_FROST.slow, durationSeconds };
+    expect(() => parseParts([{ ...VALID_FROST, slow }])).toThrow(
+      `src/data/parts.json: "[0].slow.durationSeconds" must be a number greater than 0, got ${JSON.stringify(durationSeconds)}`,
+    );
+  });
+
+  it('rejects a burn or slow that is not an object', () => {
+    expect(() => parseParts([{ ...VALID_FIRE, burn: 3 }])).toThrow(
+      'src/data/parts.json: "[0].burn" must be an object or left out, got 3',
+    );
+    expect(() => parseParts([{ ...VALID_FROST, slow: null }])).toThrow(
+      'src/data/parts.json: "[0].slow" must be an object or left out, got null',
+    );
+  });
+
+  it('rejects an entry that is not an object, an empty list, and data that is not a list', () => {
+    expect(() => parseParts([VALID_FIRE, 'frost'])).toThrow(
+      'src/data/parts.json: "[1]" must be an object, got "frost"',
+    );
+    expect(() => parseParts([])).toThrow(
+      'src/data/parts.json: expected a list with at least one entry',
+    );
+    expect(() => parseParts({ fire: VALID_FIRE })).toThrow(
+      'src/data/parts.json: expected a list with at least one entry',
+    );
+  });
+});
+
+const VALID_BOOST = {
+  id: 'fire-rate',
+  stat: 'fireRate',
+  name: 'Fire Rate',
+  description: 'Shoot more often.',
+  amount: 10,
+  unit: 'percent',
+};
+const VALID_FLAT_BOOST = {
+  id: 'max-health',
+  stat: 'maxHealth',
+  name: 'Max Health',
+  description: 'More maximum health.',
+  amount: 20,
+  unit: 'flat',
+};
+
+describe('parseBoosts', () => {
+  it('accepts valid percentage and flat boosts', () => {
+    const boosts = [VALID_BOOST, VALID_FLAT_BOOST];
+    expect(parseBoosts(boosts)).toEqual(boosts);
+  });
+
+  it.each(['fireRate', 'damage', 'moveSpeed', 'maxHealth', 'pickupRange'])(
+    'accepts the stat "%s"',
+    (stat) => {
+      expect(parseBoosts([{ ...VALID_BOOST, stat }])[0]?.stat).toBe(stat);
+    },
+  );
+
+  it.each(['dashCooldown', 'firerate', undefined])('rejects the stat %j', (stat) => {
+    expect(() => parseBoosts([{ ...VALID_BOOST, stat }])).toThrow(
+      `src/data/boosts.json: "[0].stat" must be one of "fireRate", "damage", "moveSpeed", "maxHealth", "pickupRange", got ${JSON.stringify(stat)}`,
+    );
+  });
+
+  it.each(['%', 'percentage', true, undefined])('rejects the unit %j', (unit) => {
+    expect(() => parseBoosts([VALID_BOOST, { ...VALID_FLAT_BOOST, unit }])).toThrow(
+      `src/data/boosts.json: "[1].unit" must be one of "percent", "flat", got ${JSON.stringify(unit)}`,
+    );
+  });
+
+  it.each([0, -10, '10', undefined])('rejects the amount %j', (amount) => {
+    expect(() => parseBoosts([{ ...VALID_BOOST, amount }])).toThrow(
+      `src/data/boosts.json: "[0].amount" must be a number greater than 0, got ${JSON.stringify(amount)}`,
+    );
+  });
+
+  it.each(['id', 'name', 'description'])('rejects a missing or empty %s', (field) => {
+    for (const bad of ['', 7, undefined]) {
+      expect(() => parseBoosts([{ ...VALID_BOOST, [field]: bad }])).toThrow(
+        `src/data/boosts.json: "[0].${field}" must be text that is not empty, got ${JSON.stringify(bad)}`,
+      );
+    }
+  });
+
+  it('rejects two boosts with the same id', () => {
+    expect(() => parseBoosts([VALID_BOOST, { ...VALID_FLAT_BOOST, id: 'fire-rate' }])).toThrow(
+      'src/data/boosts.json: "[1].id" must not repeat an earlier id, got "fire-rate" twice',
+    );
+  });
+
+  it('rejects an empty list and data that is not a list', () => {
+    expect(() => parseBoosts([])).toThrow(
+      'src/data/boosts.json: expected a list with at least one entry',
+    );
+    expect(() => parseBoosts(null)).toThrow(
+      'src/data/boosts.json: expected a list with at least one entry',
+    );
+  });
+});
+
 describe('loadGameData', () => {
   it('validates the data files shipped with the game', () => {
     const data = loadGameData();
@@ -424,6 +628,28 @@ describe('loadGameData', () => {
     expect(tuning.player.maxHealth).toBe(100);
     expect(enemies.swarmer?.xp).toBe(1);
     expect(enemies.brute?.xp).toBe(2);
+  });
+
+  it('ships the locked M3 rule values', () => {
+    const { parts, boosts, tuning } = loadGameData();
+    const fire = parts.find((part) => part.id === 'fire');
+    const frost = parts.find((part) => part.id === 'frost');
+
+    expect(parts.map((part) => part.slot)).toEqual(['payload', 'payload']);
+    expect(fire?.damageMultiplier).toBe(1.15);
+    expect(fire?.burn?.durationSeconds).toBe(3);
+    expect(frost?.damageMultiplier).toBeLessThan(1);
+    expect(frost?.slow).toEqual({ percent: 40, durationSeconds: 2 });
+    expect(boosts.map((boost) => boost.stat).sort()).toEqual([
+      'damage',
+      'fireRate',
+      'maxHealth',
+      'moveSpeed',
+      'pickupRange',
+    ]);
+    expect(tuning.skipHeal).toBeGreaterThan(0);
+    expect(tuning.skipHeal).toBeLessThan(tuning.player.maxHealth / 2);
+    expect(tuning.burn.tickIntervalSeconds).toBeGreaterThan(0);
   });
 
   it('ships a brute that is slower, tougher and harder-hitting than a swarmer', () => {
