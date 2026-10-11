@@ -1,3 +1,26 @@
 {
-  "moveSpeed": 320
+  "moveSpeed": 320,
+  "dash": {
+    "distance": 180,
+    "durationSeconds": 0.15,
+    "cooldownSeconds": 1.5
+  },
+  "fire": {
+    "shotsPerSecond": 3,
+    "projectileSpeed": 700,
+    "projectileDamage": 10
+  },
+  "player": {
+    "maxHealth": 100,
+    "postHitInvulnerabilitySeconds": 0.8
+  },
+  "spawn": {
+    "intervalSeconds": 2,
+    "groupSize": 3,
+    "minDistanceFromPlayer": 350
+  },
+  "caps": {
+    "maxProjectiles": 100,
+    "maxEnemies": 60
+  }
 }

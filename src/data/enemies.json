@@ -1,0 +1,10 @@
+{
+  "swarmer": {
+    "speed": 190,
+    "health": 10,
+    "contactDamage": 10,
+    "size": 26,
+    "colour": "#ff5a5f",
+    "shape": "triangle"
+  }
+}
