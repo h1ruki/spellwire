@@ -53,9 +53,16 @@ describe('parsePlayerConfig', () => {
 });
 
 const VALID_TUNING = {
+  world: { width: 3840, height: 2160 },
   moveSpeed: 320,
   dash: { distance: 180, durationSeconds: 0.15, cooldownSeconds: 1.5 },
-  fire: { shotsPerSecond: 3, projectileSpeed: 700, projectileDamage: 10 },
+  fire: {
+    shotsPerSecond: 3,
+    projectileSpeed: 700,
+    projectileDamage: 10,
+    projectileSize: 12,
+    projectileHitRadius: 8,
+  },
   player: { maxHealth: 100, postHitInvulnerabilitySeconds: 0.8 },
   spawn: { minDistanceFromPlayer: 350 },
   caps: { maxProjectiles: 100, maxEnemies: 60 },
@@ -118,6 +125,8 @@ describe('parseTuning', () => {
     ['fire', 'shotsPerSecond'],
     ['fire', 'projectileSpeed'],
     ['fire', 'projectileDamage'],
+    ['fire', 'projectileSize'],
+    ['fire', 'projectileHitRadius'],
     ['player', 'maxHealth'],
     ['player', 'postHitInvulnerabilitySeconds'],
     ['spawn', 'minDistanceFromPlayer'],
@@ -160,6 +169,7 @@ describe('parseTuning', () => {
   });
 
   it.each([
+    'world',
     'dash',
     'fire',
     'player',
@@ -173,6 +183,23 @@ describe('parseTuning', () => {
     const withoutSection = { ...VALID_TUNING, [section]: undefined };
     expect(() => parseTuning(withoutSection)).toThrow(
       `src/data/tuning.json: "${section}" must be an object, got undefined`,
+    );
+  });
+
+  it('accepts a world exactly the size of the view', () => {
+    const tuning = parseTuning({ ...VALID_TUNING, world: { width: 1280, height: 720 } });
+    expect(tuning.world).toEqual({ width: 1280, height: 720 });
+  });
+
+  it.each([1279, 0, -3840, '3840', undefined])('rejects the world width %j', (width) => {
+    expect(() => parseTuning({ ...VALID_TUNING, world: { width, height: 2160 } })).toThrow(
+      `src/data/tuning.json: "world.width" must be a number of 1280 or more (the width of the view), got ${JSON.stringify(width)}`,
+    );
+  });
+
+  it.each([719, 0, '2160', undefined])('rejects the world height %j', (height) => {
+    expect(() => parseTuning({ ...VALID_TUNING, world: { width: 3840, height } })).toThrow(
+      `src/data/tuning.json: "world.height" must be a number of 720 or more (the height of the view), got ${JSON.stringify(height)}`,
     );
   });
 
@@ -427,18 +454,18 @@ const VALID_FIRE = {
   id: 'fire',
   slot: 'payload',
   name: 'Fire',
-  description: 'Shots hit harder and set enemies burning.',
+  description: 'Shots hit much harder and set enemies burning.',
   colour: '#ff8a3d',
-  damageMultiplier: 1.15,
+  damageMultiplier: 1.25,
   burn: { durationSeconds: 3, totalDamage: 12 },
 };
 const VALID_FROST = {
   id: 'frost',
   slot: 'payload',
   name: 'Frost',
-  description: 'Shots hit softer but slow enemies down.',
+  description: 'Shots hit a little harder and slow enemies down.',
   colour: '#8fd8ff',
-  damageMultiplier: 0.85,
+  damageMultiplier: 1.1,
   slow: { percent: 40, durationSeconds: 2 },
 };
 
@@ -481,10 +508,17 @@ describe('parseParts', () => {
     );
   });
 
-  it.each([0, -1, '1.15', undefined])('rejects the damage multiplier %j', (damageMultiplier) => {
-    expect(() => parseParts([{ ...VALID_FIRE, damageMultiplier }])).toThrow(
-      `src/data/parts.json: "[0].damageMultiplier" must be a number greater than 0, got ${JSON.stringify(damageMultiplier)}`,
-    );
+  it.each([0.99, 0.85, 0, -1, '1.25', undefined])(
+    'rejects the damage multiplier %j: no payload hits softer than the plain shot',
+    (damageMultiplier) => {
+      expect(() => parseParts([{ ...VALID_FIRE, damageMultiplier }])).toThrow(
+        `src/data/parts.json: "[0].damageMultiplier" must be a number of 1 or more (no payload hits softer than the plain shot), got ${JSON.stringify(damageMultiplier)}`,
+      );
+    },
+  );
+
+  it('accepts a payload that leaves direct damage unchanged', () => {
+    expect(parseParts([{ ...VALID_FIRE, damageMultiplier: 1 }])[0]?.damageMultiplier).toBe(1);
   });
 
   it.each(['durationSeconds', 'totalDamage'])('rejects a bad burn %s', (field) => {
@@ -636,9 +670,9 @@ describe('loadGameData', () => {
     const frost = parts.find((part) => part.id === 'frost');
 
     expect(parts.map((part) => part.slot)).toEqual(['payload', 'payload']);
-    expect(fire?.damageMultiplier).toBe(1.15);
+    expect(fire?.damageMultiplier).toBe(1.25);
     expect(fire?.burn?.durationSeconds).toBe(3);
-    expect(frost?.damageMultiplier).toBeLessThan(1);
+    expect(frost?.damageMultiplier).toBe(1.1);
     expect(frost?.slow).toEqual({ percent: 40, durationSeconds: 2 });
     expect(boosts.map((boost) => boost.stat).sort()).toEqual([
       'damage',
@@ -650,6 +684,19 @@ describe('loadGameData', () => {
     expect(tuning.skipHeal).toBeGreaterThan(0);
     expect(tuning.skipHeal).toBeLessThan(tuning.player.maxHealth / 2);
     expect(tuning.burn.tickIntervalSeconds).toBeGreaterThan(0);
+  });
+
+  it('ships a world clearly larger than the 1280 by 720 view', () => {
+    const { world } = loadGameData().tuning;
+    expect(world.width).toBeGreaterThanOrEqual(1280 * 2);
+    expect(world.height).toBeGreaterThanOrEqual(720 * 2);
+  });
+
+  it('ships shots that hit a little wider than they look, and swarmers the player can outrun', () => {
+    const { tuning, enemies } = loadGameData();
+    expect(tuning.fire.projectileHitRadius).toBeGreaterThanOrEqual(tuning.fire.projectileSize / 2);
+    expect(enemies.swarmer?.speed).toBeLessThan(tuning.moveSpeed);
+    expect(enemies.brute?.speed).toBeLessThan(enemies.swarmer?.speed ?? 0);
   });
 
   it('ships a brute that is slower, tougher and harder-hitting than a swarmer', () => {

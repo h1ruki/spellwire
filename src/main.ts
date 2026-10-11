@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { loadGameData } from './core/data';
-import { ARENA_BACKGROUND, ARENA_HEIGHT, ARENA_WIDTH, ArenaScene } from './game/ArenaScene';
+import { VIEW } from './core/camera';
+import { ARENA_BACKGROUND, ArenaScene } from './game/ArenaScene';
 import { UpgradeScene } from './game/UpgradeScene';
 
 function start(): void {
@@ -13,8 +14,8 @@ function start(): void {
     scale: {
       mode: Phaser.Scale.FIT,
       autoCenter: Phaser.Scale.CENTER_BOTH,
-      width: ARENA_WIDTH,
-      height: ARENA_HEIGHT,
+      width: VIEW.width,
+      height: VIEW.height,
     },
     physics: { default: 'arcade' },
     // Only the first scene starts on its own; the arena launches the upgrade offer.
