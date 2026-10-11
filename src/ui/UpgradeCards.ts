@@ -1,6 +1,6 @@
 import type Phaser from 'phaser';
 import type { Card } from '../core/offers';
-import { EMPTY_SLOT, type CardPreview, type PreviewLine } from '../core/preview';
+import { EMPTY_SLOT, type CardPreview, type Comparison, type Tone } from '../core/preview';
 
 const CARD = { width: 340, height: 380, gap: 30, top: 150, padding: 20 };
 const SKIP_BUTTON = { width: 440, height: 56, y: 598 };
@@ -15,6 +15,19 @@ const TEXT_COLOUR = '#dfe6ff';
 const TEXT_DIM_COLOUR = '#7f8ab0';
 const TITLE_COLOUR = '#ffd23f';
 
+/**
+ * How each kind of change is marked. The symbol says the same as the colour,
+ * so the comparison does not depend on telling green from red.
+ */
+export const TONE_STYLE: Readonly<Record<Tone, { symbol: string; colour: string }>> = {
+  gain: { symbol: '▲', colour: '#4ade80' },
+  loss: { symbol: '▼', colour: '#ff6b70' },
+  neutral: { symbol: '=', colour: '#b4bcdc' },
+};
+
+/** Explains the symbols under the cards. */
+export const TONE_LEGEND = `${TONE_STYLE.gain.symbol} better   ${TONE_STYLE.loss.symbol} worse   ${TONE_STYLE.neutral.symbol} unchanged`;
+
 /** One card as it is drawn. */
 export interface CardView {
   name: string;
@@ -25,7 +38,7 @@ export interface CardView {
   colour: string | null;
   /** For a part, what happens to its slot; null for a stat boost. */
   replaces: string | null;
-  changes: readonly PreviewLine[];
+  comparisons: readonly Comparison[];
 }
 
 export interface OfferView {
@@ -47,7 +60,7 @@ export function cardView(card: Card, preview: CardPreview): CardView {
       description: card.boost.description,
       colour: null,
       replaces: null,
-      changes: preview.changes,
+      comparisons: preview.comparisons,
     };
   }
   const slot = card.part.slot;
@@ -57,7 +70,7 @@ export function cardView(card: Card, preview: CardPreview): CardView {
     description: card.part.description,
     colour: card.part.colour,
     replaces: preview.replaces,
-    changes: preview.changes,
+    comparisons: preview.comparisons,
   };
 }
 
@@ -72,6 +85,11 @@ export function offerSubtitle(waiting: number): string {
 /** Text for the slot line of a part card. */
 export function replacesLine(replaces: string): string {
   return replaces === EMPTY_SLOT ? 'Slot is empty' : `Replaces ${replaces} (lost for this run)`;
+}
+
+/** A comparison as one line of text, led by the symbol for its tone. */
+export function comparisonLine(comparison: Comparison): string {
+  return `${TONE_STYLE[comparison.tone].symbol} ${comparison.text}`;
 }
 
 function colourNumber(hex: string): number {
@@ -98,6 +116,7 @@ export function drawOffer(
 
   const count = view.cards.length;
   const left = (width - (count * CARD.width + (count - 1) * CARD.gap)) / 2;
+  const innerWidth = CARD.width - 2 * CARD.padding;
   view.cards.forEach((card, index) => {
     const x = left + index * (CARD.width + CARD.gap);
     const y = CARD.top;
@@ -120,20 +139,22 @@ export function drawOffer(
     );
     text(inner, y + 24, card.name, 28, card.colour ?? TEXT_COLOUR);
     text(inner, y + 64, card.kind.toUpperCase(), 13, TEXT_DIM_COLOUR);
-    text(inner, y + 92, card.description, 15, TEXT_COLOUR).setWordWrapWidth(
-      CARD.width - 2 * CARD.padding,
-    );
+    text(inner, y + 92, card.description, 15, TEXT_COLOUR).setWordWrapWidth(innerWidth);
 
-    let lineY = y + 168;
+    let lineY = y + 160;
     if (card.replaces !== null) {
-      text(inner, lineY, replacesLine(card.replaces), 14, accent).setWordWrapWidth(
-        CARD.width - 2 * CARD.padding,
-      );
+      text(inner, lineY, replacesLine(card.replaces), 14, accent).setWordWrapWidth(innerWidth);
       lineY += 34;
     }
-    for (const change of card.changes) {
-      text(inner, lineY, change.label, 13, TEXT_DIM_COLOUR);
-      text(inner, lineY + 17, `${change.before} → ${change.after}`, 17, TEXT_COLOUR);
+    for (const comparison of card.comparisons) {
+      text(inner, lineY, comparison.label, 13, TEXT_DIM_COLOUR);
+      text(
+        inner,
+        lineY + 17,
+        comparisonLine(comparison),
+        16,
+        TONE_STYLE[comparison.tone].colour,
+      ).setWordWrapWidth(innerWidth);
       lineY += 50;
     }
   });
@@ -155,5 +176,8 @@ export function drawOffer(
 
   const keys = count > 1 ? `1-${count}` : '1';
   const hint = count > 0 ? `Click a card or press ${keys}. Press X to skip.` : 'Press X to skip.';
-  text(width / 2, 660, hint, 14, TEXT_DIM_COLOUR).setOrigin(0.5);
+  text(width / 2, 652, hint, 14, TEXT_DIM_COLOUR).setOrigin(0.5);
+  if (view.cards.some((card) => card.comparisons.length > 0)) {
+    text(width / 2, 678, TONE_LEGEND, 14, TEXT_DIM_COLOUR).setOrigin(0.5);
+  }
 }

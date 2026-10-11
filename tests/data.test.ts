@@ -427,18 +427,18 @@ const VALID_FIRE = {
   id: 'fire',
   slot: 'payload',
   name: 'Fire',
-  description: 'Shots hit harder and set enemies burning.',
+  description: 'Shots hit much harder and set enemies burning.',
   colour: '#ff8a3d',
-  damageMultiplier: 1.15,
+  damageMultiplier: 1.25,
   burn: { durationSeconds: 3, totalDamage: 12 },
 };
 const VALID_FROST = {
   id: 'frost',
   slot: 'payload',
   name: 'Frost',
-  description: 'Shots hit softer but slow enemies down.',
+  description: 'Shots hit a little harder and slow enemies down.',
   colour: '#8fd8ff',
-  damageMultiplier: 0.85,
+  damageMultiplier: 1.1,
   slow: { percent: 40, durationSeconds: 2 },
 };
 
@@ -481,10 +481,17 @@ describe('parseParts', () => {
     );
   });
 
-  it.each([0, -1, '1.15', undefined])('rejects the damage multiplier %j', (damageMultiplier) => {
-    expect(() => parseParts([{ ...VALID_FIRE, damageMultiplier }])).toThrow(
-      `src/data/parts.json: "[0].damageMultiplier" must be a number greater than 0, got ${JSON.stringify(damageMultiplier)}`,
-    );
+  it.each([0.99, 0.85, 0, -1, '1.25', undefined])(
+    'rejects the damage multiplier %j: no payload hits softer than the plain shot',
+    (damageMultiplier) => {
+      expect(() => parseParts([{ ...VALID_FIRE, damageMultiplier }])).toThrow(
+        `src/data/parts.json: "[0].damageMultiplier" must be a number of 1 or more (no payload hits softer than the plain shot), got ${JSON.stringify(damageMultiplier)}`,
+      );
+    },
+  );
+
+  it('accepts a payload that leaves direct damage unchanged', () => {
+    expect(parseParts([{ ...VALID_FIRE, damageMultiplier: 1 }])[0]?.damageMultiplier).toBe(1);
   });
 
   it.each(['durationSeconds', 'totalDamage'])('rejects a bad burn %s', (field) => {
@@ -636,9 +643,9 @@ describe('loadGameData', () => {
     const frost = parts.find((part) => part.id === 'frost');
 
     expect(parts.map((part) => part.slot)).toEqual(['payload', 'payload']);
-    expect(fire?.damageMultiplier).toBe(1.15);
+    expect(fire?.damageMultiplier).toBe(1.25);
     expect(fire?.burn?.durationSeconds).toBe(3);
-    expect(frost?.damageMultiplier).toBeLessThan(1);
+    expect(frost?.damageMultiplier).toBe(1.1);
     expect(frost?.slow).toEqual({ percent: 40, durationSeconds: 2 });
     expect(boosts.map((boost) => boost.stat).sort()).toEqual([
       'damage',
