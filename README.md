@@ -2,7 +2,7 @@
 
 A top-down survivor roguelite where you build your weapon from a trigger, a modifier and an elemental payload, then watch how each part changes the way it fires.
 
-**Status:** early development. Milestones M1 (move and shoot) and M2 (horde and XP) are complete. Milestone M3 (loadouts) is in review: every level-up pauses the game and offers three upgrade cards, and the Fire and Frost payloads change how the basic shot behaves. Triggers and modifiers arrive in M4. The shapes and effects on screen are placeholders for the planned pixel art.
+**Status:** early development. Milestones M1 (move and shoot) and M2 (horde and XP) are complete. Milestone M3 (loadouts) is in review: every level-up pauses the game and offers three upgrade cards, the Fire and Frost payloads change how the basic shot behaves, and the run takes place in a world larger than the screen. Triggers and modifiers arrive in M4. The shapes and effects on screen are placeholders for the planned pixel art.
 
 **Play:** <https://h1ruki.github.io/spellwire/> (live since 11 October 2026; it shows the latest milestone merged to `main`, so M3 appears there once it is merged)
 
@@ -17,7 +17,9 @@ A top-down survivor roguelite where you build your weapon from a trigger, a modi
 | **X** or the Skip button | Skip the upgrade and restore a little health |
 | **R** | Restart after you die |
 
-Enemies hurt on contact; brutes are slow and tough and hit much harder than swarmers. After a hit the screen shakes, you blink and you cannot be hurt again for a moment.
+The world is three screens wide and three high. The camera keeps you in the middle of the screen until it reaches the edge of the world, where it stops and you walk on towards the edge by yourself. A lighter strip and a border mark the edge; nothing lies beyond it. Enemies arrive from just off screen.
+
+Enemies hurt on contact; brutes are slower and tough, hit much harder than swarmers and are barely pushed back by shots. After a hit the screen shakes, you blink and you cannot be hurt again for a moment.
 
 Every kill drops an XP crystal. Walk near a crystal and it flies to you. A full XP bar raises your level. The clock in the top-right corner shows how long the run has lasted; the horde gets heavier as it runs.
 
@@ -25,10 +27,10 @@ Every kill drops an XP crystal. Walk near a crystal and it flies to you. A full 
 
 Your weapon has one loadout with three slots: trigger, modifier and payload. They start empty, and the bottom-left corner shows what is in each. The plain shot always fires; parts only change it.
 
-Each level-up pauses everything (enemies, shots, the clock and every cooldown) and offers three cards. Each card shows what would change, as the value before and after. A key or mouse button that was already held when the offer appeared does nothing until you press it again. Gain two levels at once and you get two offers, one after the other.
+Each level-up pauses everything (enemies, shots, the clock and every cooldown) and offers three cards. Each card compares your current build with the build it would give: ▲ in green is better, ▼ in red is worse, and = marks something that stays the same. Direct damage is shown as a percentage of the plain shot. A key or mouse button that was already held when the offer appeared does nothing until you press it again. Gain two levels at once and you get two offers, one after the other.
 
-- **Fire** (payload): shots hit 15% harder and set enemies burning for 3 seconds. A burning enemy keeps taking damage between hits, and can die from the burn alone.
-- **Frost** (payload): shots hit softer but slow enemies by 40% for 2 seconds.
+- **Fire** (payload): shots deal 125% damage and set enemies burning for 3 seconds. A burning enemy keeps taking damage between hits, and can die from the burn alone.
+- **Frost** (payload): shots deal 110% damage and slow enemies by 40% for 2 seconds.
 - **Stat boosts**: fire rate, damage, move speed, max health and pickup range. They do not use a slot, last for the run and add up each time you take one.
 - **Skip**: take nothing and restore 10 health, never above your maximum.
 
@@ -67,11 +69,12 @@ Tuning lives in JSON under `src/data/` and is validated on startup; a mistake sh
 
 - `src/data/player.json`: `shape` (`"square"`, `"circle"` or `"triangle"`), `colour` (a hex colour such as `"#39e6ff"`) and `size` (pixels).
 - `src/data/tuning.json`: distances are in pixels, speeds in pixels per second and times in seconds.
+  - `world`: `width` and `height` of the world; at least the size of the view (1280 by 720)
   - `moveSpeed`
   - `dash`: `distance`, `durationSeconds`, `cooldownSeconds`
-  - `fire`: `shotsPerSecond`, `projectileSpeed`, `projectileDamage`
+  - `fire`: `shotsPerSecond`, `projectileSpeed`, `projectileDamage`, `projectileSize` (as drawn) and `projectileHitRadius` (what it hits with; larger than half the size makes aiming more forgiving)
   - `player`: `maxHealth`, `postHitInvulnerabilitySeconds`
-  - `spawn`: `minDistanceFromPlayer`
+  - `spawn`: `minDistanceFromPlayer` (enemies appear just off screen, and never closer to you than this)
   - `caps`: `maxProjectiles`, `maxEnemies`
   - `xp`: `firstLevelXp` (XP for the first level-up), `perLevelIncrease` (extra XP each later level needs)
   - `pickupRange`
@@ -80,7 +83,7 @@ Tuning lives in JSON under `src/data/` and is validated on startup; a mistake sh
   - `skipHeal`: health restored by skipping an upgrade offer
   - `burn`: `tickIntervalSeconds`, how often a burning enemy takes its burn damage
 - `src/data/enemies.json`: for each enemy (`swarmer`, `brute`), `speed`, `health`, `contactDamage`, `size`, `colour`, `shape` (the player shapes plus `"hexagon"`), `xp` and `knockbackResistance` (0 = pushed fully by a hit, 1 = not pushed).
-- `src/data/parts.json`: the weapon parts, as a list. Each has an `id` (used by the code; keep it), `slot` (only `"payload"` exists so far), `name` and `description` (shown on the card), `colour` (shots, cards, the HUD and the effect on enemies) and `damageMultiplier` (1.15 is 15% more direct damage, 0.85 is 15% less). A part may also have `burn` (`durationSeconds` and `totalDamage`, the damage a burn deals if left to run out) and `slow` (`percent` from above 0 to 100, and `durationSeconds`).
+- `src/data/parts.json`: the weapon parts, as a list. Each has an `id` (used by the code; keep it), `slot` (only `"payload"` exists so far), `name` and `description` (shown on the card), `colour` (shots, cards, the HUD and the effect on enemies) and `damageMultiplier` (1.25 is 125% of the plain shot's direct damage; it must be 1 or more, so no payload hits softer than the plain shot). A part may also have `burn` (`durationSeconds` and `totalDamage`, the damage a burn deals if left to run out) and `slow` (`percent` from above 0 to 100, and `durationSeconds`).
 - `src/data/boosts.json`: the stat-boost cards, as a list. Each has an `id`, `stat` (`"fireRate"`, `"damage"`, `"moveSpeed"`, `"maxHealth"` or `"pickupRange"`), `name`, `description`, `amount` and `unit`: `"percent"` adds that share of the starting value, `"flat"` adds the amount itself. Descriptions avoid numbers because the card shows the real before and after values.
 - `src/data/spawns.json`: the spawn timeline. Each entry has `atSeconds` and a `spawns` list of `enemy`, `intervalSeconds` and `groupSize`. An entry is a complete snapshot of everything that spawns from that time until the next entry, not a change to the one before: an entry that adds brutes must list swarmers too. Entries must be in time order, and the last one continues for the rest of the run.
 
@@ -88,7 +91,7 @@ Tuning lives in JSON under `src/data/` and is validated on startup; a mistake sh
 
 TypeScript, [Phaser 3](https://phaser.io/) and Vite, deployed to GitHub Pages by a GitHub Actions workflow on every push to `main`.
 
-- `src/core/`: gameplay rules as plain TypeScript with no Phaser imports, covered by unit tests in `tests/`.
+- `src/core/`: gameplay rules as plain TypeScript with no Phaser imports, covered by unit tests in `tests/`. This includes where the camera sits, where enemies may spawn and how an upgrade card compares two builds.
 - `src/data/`: content and tuning values.
 - `src/game/`: Phaser scenes (the arena and the upgrade offer shown over it), input, collisions and drawing.
 - `src/ui/`: the on-screen display (health, dash, XP bar, level, run time, loadout slots, death prompt) and the upgrade cards.
