@@ -58,7 +58,10 @@ export function formatRunTime(elapsedSeconds: number): string {
   return `${Math.floor(whole / 60)}:${seconds < 10 ? '0' : ''}${seconds}`;
 }
 
-/** Health, dash, XP, level, run time, the loadout and the death prompt. Display only. */
+/**
+ * Health, dash, XP, level, run time, the loadout and the death prompt. Display
+ * only. Everything is fixed to the screen and does not scroll with the world.
+ */
 export class Hud {
   private readonly scene: Phaser.Scene;
   private readonly bars: Phaser.GameObjects.Graphics;
@@ -75,7 +78,7 @@ export class Hud {
     const { width } = scene.scale;
     this.xpBarX = (width - XP_BAR.width) / 2;
 
-    this.bars = scene.add.graphics().setDepth(HUD_DEPTH);
+    this.bars = scene.add.graphics().setDepth(HUD_DEPTH).setScrollFactor(0);
     this.healthText = this.label(0, MARGIN + HEALTH_BAR.height / 2, 16)
       .setOrigin(0, 0.5)
       .setColor(TEXT_COLOUR);
@@ -152,12 +155,14 @@ export class Hud {
         padding: { x: 20, y: 12 },
       })
       .setOrigin(0.5)
+      .setScrollFactor(0)
       .setDepth(HUD_DEPTH + 1);
   }
 
   private label(x: number, y: number, fontSize: number): Phaser.GameObjects.Text {
     return this.scene.add
       .text(x, y, '', { fontFamily: 'monospace', fontSize: `${fontSize}px` })
+      .setScrollFactor(0)
       .setDepth(HUD_DEPTH);
   }
 
