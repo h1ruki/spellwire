@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { crystalVelocity, dropCrystal, type Crystal } from '../src/core/crystals';
+import { crystalTierIndex, crystalVelocity, dropCrystal, type Crystal } from '../src/core/crystals';
 import { addXp, createXpState } from '../src/core/xp';
 
 const totalValue = (crystals: readonly Crystal[]): number =>
@@ -114,5 +114,38 @@ describe('crystalVelocity', () => {
   it('is attracted exactly at the edge of the range', () => {
     const velocity = crystalVelocity({ x: 480, y: 300 }, PLAYER, RANGE, SPEED);
     expect(velocity.x).toBeCloseTo(SPEED);
+  });
+});
+
+describe('crystalTierIndex', () => {
+  const TIERS = [
+    { minValue: 1, colour: '#39e6ff', size: 10 },
+    { minValue: 2, colour: '#a56bff', size: 14 },
+  ];
+
+  it('gives a value of 1 the first tier', () => {
+    expect(crystalTierIndex(TIERS, 1)).toBe(0);
+  });
+
+  it('gives a value of 2 and above the second tier', () => {
+    expect(crystalTierIndex(TIERS, 2)).toBe(1);
+    expect(crystalTierIndex(TIERS, 3)).toBe(1);
+    expect(crystalTierIndex(TIERS, 40)).toBe(1);
+  });
+
+  it('uses the highest tier reached when there are more tiers', () => {
+    const more = [...TIERS, { minValue: 10, colour: '#ffd23f', size: 20 }];
+    expect(crystalTierIndex(more, 9)).toBe(1);
+    expect(crystalTierIndex(more, 10)).toBe(2);
+  });
+
+  it('follows the total of a crystal that absorbed others', () => {
+    const merged = dropCrystal([{ x: 0, y: 0, value: 1 }], { x: 5, y: 0, value: 1 }, 1);
+    expect(merged.crystals[0]?.value).toBe(2);
+    expect(crystalTierIndex(TIERS, merged.crystals[0]?.value ?? 0)).toBe(1);
+  });
+
+  it('falls back to the first tier below it', () => {
+    expect(crystalTierIndex(TIERS, 0.5)).toBe(0);
   });
 });

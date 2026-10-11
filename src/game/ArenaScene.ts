@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { aimDirection, DEFAULT_AIM } from '../core/aim';
 import { chaseVelocity } from '../core/chase';
-import { crystalVelocity, dropCrystal } from '../core/crystals';
+import { crystalTierIndex, crystalVelocity, dropCrystal } from '../core/crystals';
 import type { EnemyConfig, GameData } from '../core/data';
 import { createDashState, dashReadiness, stepDash, type DashState } from '../core/dash';
 import { createFireState, stepFire, type FireState } from '../core/fire';
@@ -37,12 +37,7 @@ const PLAYER_TEXTURE = 'player';
 const PROJECTILE_TEXTURE = 'projectile';
 const PROJECTILE_COLOUR = '#f4f7ff';
 const PROJECTILE_SIZE = 10;
-const CRYSTAL_TEXTURE = 'crystal';
-const CRYSTAL_COLOUR = '#ffd23f';
-const CRYSTAL_SIZE = 10;
-/** A crystal that absorbed others at the cap is drawn larger, up to this scale. */
-const CRYSTAL_MAX_SCALE = 2.5;
-const CRYSTAL_SCALE_PER_XP = 0.15;
+const crystalTexture = (tier: number): string => `crystal-${tier}`;
 
 /** Enemy hit circles are a little smaller than the drawn shape, to be forgiving. */
 const ENEMY_HIT_RADIUS_FRACTION = 0.4;
@@ -137,7 +132,9 @@ export class ArenaScene extends Phaser.Scene {
       ensureShapeTexture(this, enemyTexture(name), config.shape, config.colour, config.size);
     }
     ensureShapeTexture(this, PROJECTILE_TEXTURE, 'circle', PROJECTILE_COLOUR, PROJECTILE_SIZE);
-    ensureShapeTexture(this, CRYSTAL_TEXTURE, 'square', CRYSTAL_COLOUR, CRYSTAL_SIZE);
+    tuning.crystals.tiers.forEach((tier, index) => {
+      ensureShapeTexture(this, crystalTexture(index), 'square', tier.colour, tier.size);
+    });
 
     this.crystals = this.physics.add.group();
     this.projectiles = this.physics.add.group();
@@ -408,10 +405,15 @@ export class ArenaScene extends Phaser.Scene {
     const index = drop.mergedInto ?? drop.crystals.length - 1;
     const total = drop.crystals[index]?.value ?? value;
     const absorbing = drop.mergedInto === null ? undefined : sprites[index];
-    const crystal = absorbing ?? (this.crystals.create(x, y, CRYSTAL_TEXTURE) as Sprite);
+    const tiers = this.gameData.tuning.crystals.tiers;
+    const tier = crystalTierIndex(tiers, total);
+    const size = tiers[tier]?.size ?? 0;
+    const crystal = absorbing ?? (this.crystals.create(x, y, crystalTexture(tier)) as Sprite);
+    // A crystal's look follows its value, so a merged crystal takes the tier of its new total.
+    crystal.setTexture(crystalTexture(tier));
+    (crystal.body as Phaser.Physics.Arcade.Body).setSize(size, size);
     crystal.setData(VALUE_DATA_KEY, total);
     crystal.setRotation(Math.PI / 4);
-    crystal.setScale(Math.min(CRYSTAL_MAX_SCALE, 1 + (total - 1) * CRYSTAL_SCALE_PER_XP));
   }
 
   private collectCrystal(crystal: Sprite): void {

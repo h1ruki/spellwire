@@ -3,6 +3,7 @@ import {
   loadGameData,
   parseEnemies,
   parsePlayerConfig,
+  parseCrystalTiers,
   parseSpawnTimeline,
   parseTuning,
   PLAYER_SHAPES,
@@ -58,7 +59,14 @@ const VALID_TUNING = {
   caps: { maxProjectiles: 100, maxEnemies: 60 },
   xp: { firstLevelXp: 20, perLevelIncrease: 10 },
   pickupRange: 120,
-  crystals: { attractSpeed: 520, maxCrystals: 80 },
+  crystals: {
+    attractSpeed: 520,
+    maxCrystals: 80,
+    tiers: [
+      { minValue: 1, colour: '#39e6ff', size: 10 },
+      { minValue: 2, colour: '#a56bff', size: 14 },
+    ],
+  },
   hitFeedback: { flashSeconds: 0.08, knockbackStrength: 24, shakeIntensity: 5, shakeSeconds: 0.15 },
 };
 
@@ -249,6 +257,55 @@ describe('parseEnemies', () => {
   });
 });
 
+describe('parseCrystalTiers', () => {
+  const FIELD = 'crystals.tiers';
+  const parse = (raw: unknown) => parseCrystalTiers('src/data/tuning.json', FIELD, raw);
+  const T1 = { minValue: 1, colour: '#39e6ff', size: 10 };
+  const T2 = { minValue: 2, colour: '#a56bff', size: 14 };
+
+  it('accepts ascending tiers starting at 1', () => {
+    expect(parse([T1, T2, { minValue: 5, colour: '#ffd23f', size: 18 }])).toHaveLength(3);
+  });
+
+  it('rejects an empty or missing list', () => {
+    expect(() => parse([])).toThrow(
+      'src/data/tuning.json: "crystals.tiers" must be a list with at least one tier',
+    );
+    expect(() => parse(undefined)).toThrow(
+      '"crystals.tiers" must be a list with at least one tier',
+    );
+  });
+
+  it('rejects a first tier that does not start at 1', () => {
+    expect(() => parse([{ ...T1, minValue: 2 }])).toThrow(
+      'src/data/tuning.json: "crystals.tiers[0].minValue" must be 1 for the first tier, got 2',
+    );
+  });
+
+  it('rejects unsorted tiers and duplicates', () => {
+    expect(() => parse([T1, { ...T2, minValue: 5 }, { ...T2, minValue: 3 }])).toThrow(
+      '"crystals.tiers[2].minValue" must be greater than the tier before it (5), got 3',
+    );
+    expect(() => parse([T1, T2, { ...T2 }])).toThrow(
+      '"crystals.tiers[2].minValue" must be greater than the tier before it (2), got 2',
+    );
+  });
+
+  it('rejects a bad colour and a bad size', () => {
+    expect(() => parse([{ ...T1, colour: 'cyan' }])).toThrow(
+      '"crystals.tiers[0].colour" must be a hex colour like "#39e6ff", got "cyan"',
+    );
+    expect(() => parse([{ ...T1, size: 0 }])).toThrow(
+      '"crystals.tiers[0].size" must be a number greater than 0, got 0',
+    );
+  });
+
+  it('is checked as part of the tuning', () => {
+    const tuning = { ...VALID_TUNING, crystals: { ...VALID_TUNING.crystals, tiers: [] } };
+    expect(() => parseTuning(tuning)).toThrow('"crystals.tiers" must be a list');
+  });
+});
+
 const ENEMY_NAMES = ['swarmer', 'brute'];
 const SWARMERS = { enemy: 'swarmer', intervalSeconds: 2, groupSize: 3 };
 const BRUTES = { enemy: 'brute', intervalSeconds: 8, groupSize: 1 };
@@ -366,7 +423,7 @@ describe('loadGameData', () => {
     expect(tuning.fire.shotsPerSecond).toBe(3);
     expect(tuning.player.maxHealth).toBe(100);
     expect(enemies.swarmer?.xp).toBe(1);
-    expect(enemies.brute?.xp).toBe(1);
+    expect(enemies.brute?.xp).toBe(2);
   });
 
   it('ships a brute that is slower, tougher and harder-hitting than a swarmer', () => {

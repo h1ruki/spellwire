@@ -28,7 +28,11 @@
   "pickupRange": 120,
   "crystals": {
     "attractSpeed": 520,
-    "maxCrystals": 80
+    "maxCrystals": 80,
+    "tiers": [
+      { "minValue": 1, "colour": "#39e6ff", "size": 10 },
+      { "minValue": 2, "colour": "#a56bff", "size": 14 }
+    ]
   },
   "hitFeedback": {
     "flashSeconds": 0.08,

@@ -2,6 +2,7 @@ import enemiesJson from '../data/enemies.json';
 import playerJson from '../data/player.json';
 import spawnsJson from '../data/spawns.json';
 import tuningJson from '../data/tuning.json';
+import type { CrystalTier } from './crystals';
 import type { DashTuning } from './dash';
 import type { SpawnPhase, SpawnRule } from './schedule';
 import type { XpTuning } from './xp';
@@ -53,6 +54,8 @@ export interface CrystalTuning {
   attractSpeed: number;
   /** Most crystals on the field at once; further drops merge into existing crystals. */
   maxCrystals: number;
+  /** Look by value, sorted by `minValue`; the first tier starts at 1. */
+  tiers: CrystalTier[];
 }
 
 export interface HitFeedbackTuning {
@@ -178,6 +181,42 @@ function fraction(file: string, field: string, value: unknown): number {
   return value;
 }
 
+/** Validates crystal tiers: at least one, starting at 1, strictly ascending. */
+export function parseCrystalTiers(file: string, field: string, raw: unknown): CrystalTier[] {
+  if (!Array.isArray(raw) || raw.length === 0) {
+    throw new DataError(
+      file,
+      field,
+      `must be a list with at least one tier, got ${JSON.stringify(raw)}`,
+    );
+  }
+  const tiers: CrystalTier[] = [];
+  raw.forEach((entry: unknown, index) => {
+    const at = `${field}[${index}]`;
+    if (!isRecord(entry)) {
+      throw new DataError(file, at, `must be an object, got ${JSON.stringify(entry)}`);
+    }
+    const minValue = positiveNumber(file, `${at}.minValue`, entry.minValue);
+    const previous = tiers[index - 1];
+    if (index === 0 && minValue !== 1) {
+      throw new DataError(file, `${at}.minValue`, `must be 1 for the first tier, got ${minValue}`);
+    }
+    if (previous && minValue <= previous.minValue) {
+      throw new DataError(
+        file,
+        `${at}.minValue`,
+        `must be greater than the tier before it (${previous.minValue}), got ${minValue}`,
+      );
+    }
+    tiers.push({
+      minValue,
+      colour: hexColour(file, `${at}.colour`, entry.colour),
+      size: positiveNumber(file, `${at}.size`, entry.size),
+    });
+  });
+  return tiers;
+}
+
 function shape(file: string, field: string, value: unknown): Shape {
   if (typeof value !== 'string' || !SHAPES.includes(value as Shape)) {
     const allowed = SHAPES.map((s) => `"${s}"`).join(', ');
@@ -259,6 +298,7 @@ export function parseTuning(raw: unknown): Tuning {
     crystals: {
       attractSpeed: positiveNumber(file, 'crystals.attractSpeed', crystals.attractSpeed),
       maxCrystals: positiveInteger(file, 'crystals.maxCrystals', crystals.maxCrystals),
+      tiers: parseCrystalTiers(file, 'crystals.tiers', crystals.tiers),
     },
     hitFeedback: {
       flashSeconds: nonNegativeNumber(file, 'hitFeedback.flashSeconds', hitFeedback.flashSeconds),

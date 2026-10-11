@@ -47,6 +47,31 @@ export function dropCrystal(
   };
 }
 
+/** How crystals of a given value look. A crystal uses the highest tier it reaches. */
+export interface CrystalTier {
+  /** The smallest crystal value that uses this tier. */
+  minValue: number;
+  /** Hex colour in the form "#rrggbb". */
+  colour: string;
+  /** Width and height in pixels. */
+  size: number;
+}
+
+/**
+ * The index of the tier for a crystal value: the highest tier whose
+ * `minValue` is at most the value. Tiers must be sorted by `minValue`; a value
+ * below the first tier uses the first tier.
+ */
+export function crystalTierIndex(tiers: readonly CrystalTier[], value: number): number {
+  let index = 0;
+  tiers.forEach((tier, i) => {
+    if (tier.minValue <= value) {
+      index = i;
+    }
+  });
+  return index;
+}
+
 /** A crystal flies towards the player once inside the pickup range, and otherwise stays put. */
 export function crystalVelocity(
   crystal: Vec2,
