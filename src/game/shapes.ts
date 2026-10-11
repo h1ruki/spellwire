@@ -33,6 +33,14 @@ export function ensureShapeTexture(
     case 'triangle':
       graphics.fillTriangle(half, 0, size, size, 0, size);
       break;
+    case 'hexagon': {
+      const corners = Array.from({ length: 6 }, (_, corner) => {
+        const angle = (Math.PI / 3) * corner;
+        return { x: half + half * Math.cos(angle), y: half + half * Math.sin(angle) };
+      });
+      graphics.fillPoints(corners, true);
+      break;
+    }
   }
 
   graphics.generateTexture(key, size, size);
