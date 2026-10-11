@@ -15,12 +15,25 @@
     "postHitInvulnerabilitySeconds": 0.8
   },
   "spawn": {
-    "intervalSeconds": 2,
-    "groupSize": 3,
     "minDistanceFromPlayer": 350
   },
   "caps": {
     "maxProjectiles": 100,
     "maxEnemies": 60
+  },
+  "xp": {
+    "firstLevelXp": 25,
+    "perLevelIncrease": 10
+  },
+  "pickupRange": 120,
+  "crystals": {
+    "attractSpeed": 520,
+    "maxCrystals": 80
+  },
+  "hitFeedback": {
+    "flashSeconds": 0.08,
+    "knockbackStrength": 24,
+    "shakeIntensity": 5,
+    "shakeSeconds": 0.15
   }
 }
