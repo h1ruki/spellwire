@@ -172,6 +172,7 @@ Test the rules automatically and the fun by hand. Automated tests cover the core
 - **Performance check:** use a **time-boxed optional M0 rendering smoke test** only if useful. Conduct representative combat performance checks during **M4–M5**, with actual enemy behaviour, collisions, projectile modifiers and effects. Test on the intended laptop/browser, record observed frame times/FPS and adjust only when evidence justifies optimisation. A synthetic 300-enemy/400-projectile test is not an M0 pass/fail gate.
 
 ## Visual identity, audio and licensing
+> **Amended 11 October 2026:** the visual direction is now 16-bit-inspired pixel art with modern magical effects; see docs/decisions.md. The neon-geometric guidance below is superseded; its readability principles, audio and licensing guidance still apply.
 
 A neon "magical machinery" look built from glowing geometric shapes drawn in code, which looks sharp, needs no art assets and has no licensing risk.
 
