@@ -2,9 +2,9 @@
 
 A top-down survivor roguelite where you build your weapon from a trigger, a modifier and an elemental payload, then watch how each part changes the way it fires.
 
-**Status:** early development. Milestone M1 (move and shoot) is in review: move, dash, auto-fire at the cursor and fight off chasing swarmers. There are no upgrades or weapon parts yet.
+**Status:** early development. Milestone M1 (move and shoot) is complete. Milestone M2 (horde and XP) is in review: the horde grows on a timeline, brutes join the swarmers at about 1:15, and kills drop XP crystals that fill a bar and raise your level. Level-ups do not give upgrades yet; upgrades and weapon parts arrive in M3. The shapes on screen are placeholders for the planned pixel art.
 
-**Play:** <https://h1ruki.github.io/spellwire/> (live since 11 October 2026; it shows the latest milestone merged to `main`, so M1 appears there once it is merged)
+**Play:** <https://h1ruki.github.io/spellwire/> (live since 11 October 2026; it shows the latest milestone merged to `main`, so M2 appears there once it is merged)
 
 ## Controls
 
@@ -15,7 +15,9 @@ A top-down survivor roguelite where you build your weapon from a trigger, a modi
 | **Mouse** | Aim. The weapon fires on its own towards the cursor; there is no fire button |
 | **R** | Restart after you die |
 
-Swarmers hurt on contact. After a hit you blink and cannot be hurt again for a moment.
+Enemies hurt on contact; brutes are slow and tough and hit much harder than swarmers. After a hit the screen shakes, you blink and you cannot be hurt again for a moment.
+
+Every kill drops an XP crystal. Walk near a crystal and it flies to you. A full XP bar raises your level. The clock in the top-right corner shows how long the run has lasted; the horde gets heavier as it runs.
 
 - [Product specification](docs/spec.md)
 - [Development plan](docs/plan.md)
@@ -54,9 +56,14 @@ Tuning lives in JSON under `src/data/` and is validated on startup; a mistake sh
   - `dash`: `distance`, `durationSeconds`, `cooldownSeconds`
   - `fire`: `shotsPerSecond`, `projectileSpeed`, `projectileDamage`
   - `player`: `maxHealth`, `postHitInvulnerabilitySeconds`
-  - `spawn`: `intervalSeconds`, `groupSize`, `minDistanceFromPlayer`
+  - `spawn`: `minDistanceFromPlayer`
   - `caps`: `maxProjectiles`, `maxEnemies`
-- `src/data/enemies.json`: for the `swarmer`, `speed`, `health`, `contactDamage`, `size`, `colour` and `shape`.
+  - `xp`: `firstLevelXp` (XP for the first level-up), `perLevelIncrease` (extra XP each later level needs)
+  - `pickupRange`
+  - `crystals`: `attractSpeed`, `maxCrystals` and `tiers`, a list of `minValue`, `colour` and `size`. A crystal looks like the highest tier whose `minValue` is at most its XP value (the first tier must start at 1; tiers go in ascending order), so one that absorbs others at the cap changes look with its total
+  - `hitFeedback`: `flashSeconds`, `knockbackStrength`, `shakeIntensity` (pixels; 0 turns the shake off), `shakeSeconds`
+- `src/data/enemies.json`: for each enemy (`swarmer`, `brute`), `speed`, `health`, `contactDamage`, `size`, `colour`, `shape` (the player shapes plus `"hexagon"`), `xp` and `knockbackResistance` (0 = pushed fully by a hit, 1 = not pushed).
+- `src/data/spawns.json`: the spawn timeline. Each entry has `atSeconds` and a `spawns` list of `enemy`, `intervalSeconds` and `groupSize`. An entry is a complete snapshot of everything that spawns from that time until the next entry, not a change to the one before: an entry that adds brutes must list swarmers too. Entries must be in time order, and the last one continues for the rest of the run.
 
 ## How it is built
 
@@ -65,7 +72,7 @@ TypeScript, [Phaser 3](https://phaser.io/) and Vite, deployed to GitHub Pages by
 - `src/core/`: gameplay rules as plain TypeScript with no Phaser imports, covered by unit tests in `tests/`.
 - `src/data/`: content and tuning values.
 - `src/game/`: Phaser scenes, input, collisions and drawing.
-- `src/ui/`: the on-screen display (health bar, dash indicator, death prompt).
+- `src/ui/`: the on-screen display (health, dash, XP bar, level, run time, death prompt).
 
 ## Licence
 

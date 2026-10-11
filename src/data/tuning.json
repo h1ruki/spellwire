@@ -15,12 +15,29 @@
     "postHitInvulnerabilitySeconds": 0.8
   },
   "spawn": {
-    "intervalSeconds": 2,
-    "groupSize": 3,
     "minDistanceFromPlayer": 350
   },
   "caps": {
     "maxProjectiles": 100,
     "maxEnemies": 60
+  },
+  "xp": {
+    "firstLevelXp": 25,
+    "perLevelIncrease": 10
+  },
+  "pickupRange": 120,
+  "crystals": {
+    "attractSpeed": 520,
+    "maxCrystals": 80,
+    "tiers": [
+      { "minValue": 1, "colour": "#39e6ff", "size": 10 },
+      { "minValue": 2, "colour": "#a56bff", "size": 14 }
+    ]
+  },
+  "hitFeedback": {
+    "flashSeconds": 0.08,
+    "knockbackStrength": 24,
+    "shakeIntensity": 5,
+    "shakeSeconds": 0.15
   }
 }

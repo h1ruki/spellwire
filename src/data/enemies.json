@@ -5,6 +5,18 @@
     "contactDamage": 10,
     "size": 26,
     "colour": "#ff5a5f",
-    "shape": "triangle"
+    "shape": "triangle",
+    "xp": 1,
+    "knockbackResistance": 0
+  },
+  "brute": {
+    "speed": 70,
+    "health": 60,
+    "contactDamage": 25,
+    "size": 52,
+    "colour": "#a56bff",
+    "shape": "hexagon",
+    "xp": 2,
+    "knockbackResistance": 0.75
   }
 }

@@ -1,0 +1,56 @@
+[
+  {
+    "atSeconds": 0,
+    "spawns": [{ "enemy": "swarmer", "intervalSeconds": 2, "groupSize": 2 }]
+  },
+  {
+    "atSeconds": 30,
+    "spawns": [{ "enemy": "swarmer", "intervalSeconds": 2, "groupSize": 3 }]
+  },
+  {
+    "atSeconds": 60,
+    "spawns": [{ "enemy": "swarmer", "intervalSeconds": 1.6, "groupSize": 3 }]
+  },
+  {
+    "atSeconds": 75,
+    "spawns": [
+      { "enemy": "swarmer", "intervalSeconds": 1.6, "groupSize": 3 },
+      { "enemy": "brute", "intervalSeconds": 12, "groupSize": 1 }
+    ]
+  },
+  {
+    "atSeconds": 120,
+    "spawns": [
+      { "enemy": "swarmer", "intervalSeconds": 1.6, "groupSize": 3 },
+      { "enemy": "brute", "intervalSeconds": 8, "groupSize": 1 }
+    ]
+  },
+  {
+    "atSeconds": 180,
+    "spawns": [
+      { "enemy": "swarmer", "intervalSeconds": 1.4, "groupSize": 3 },
+      { "enemy": "brute", "intervalSeconds": 6, "groupSize": 1 }
+    ]
+  },
+  {
+    "atSeconds": 240,
+    "spawns": [
+      { "enemy": "swarmer", "intervalSeconds": 1.2, "groupSize": 3 },
+      { "enemy": "brute", "intervalSeconds": 5, "groupSize": 1 }
+    ]
+  },
+  {
+    "atSeconds": 270,
+    "spawns": [
+      { "enemy": "swarmer", "intervalSeconds": 0.8, "groupSize": 4 },
+      { "enemy": "brute", "intervalSeconds": 3, "groupSize": 2 }
+    ]
+  },
+  {
+    "atSeconds": 300,
+    "spawns": [
+      { "enemy": "swarmer", "intervalSeconds": 1.2, "groupSize": 3 },
+      { "enemy": "brute", "intervalSeconds": 5, "groupSize": 1 }
+    ]
+  }
+]
